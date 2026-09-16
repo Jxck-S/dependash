@@ -1,0 +1,48 @@
+{
+  "name": "dependash",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local-only Dependabot dashboard: snapshots GitHub Dependabot state to JSON files and renders trends.",
+  "scripts": {
+    "snapshot": "tsx scripts/snapshot.ts",
+    "demo": "tsx scripts/demo.ts",
+    "dev": "next dev -p 3939",
+    "build": "next build",
+    "start": "next start -p 3939",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx scripts/selftest.ts",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "15.5.4",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "recharts": "2.15.4",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "@types/react": "19.1.9",
+    "@types/react-dom": "19.1.7",
+    "tsx": "4.20.3",
+    "typescript": "5.8.3"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "sharp@0.34.5": true
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Jxck-S/dependash.git"
+  },
+  "keywords": [
+    "dependabot",
+    "security",
+    "dashboard",
+    "github",
+    "vulnerabilities",
+    "supply-chain"
+  ],
+  "author": "Jack Sweeney"
+}
