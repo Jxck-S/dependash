@@ -4,6 +4,7 @@
  *
  *   npm run snapshot                       # scan everything you can see
  *   npm run snapshot -- --owner myorg      # limit to one org/user
+ *   npm run snapshot -- --exclude-org bigorg  # skip an org/user
  *   npm run snapshot -- --include-archived --include-forks
  *   npm run snapshot -- --dependamate "dependamate scan --json"
  *
@@ -18,6 +19,7 @@ import { emptySeverityCounts } from '../src/lib/types';
 
 interface Args {
   owners: string[];
+  excludeOwners: string[];
   only: string[];
   includeArchived: boolean;
   includeForks: boolean;
@@ -32,6 +34,7 @@ interface Args {
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     owners: [],
+    excludeOwners: [],
     only: [],
     includeArchived: false,
     includeForks: false,
@@ -47,6 +50,10 @@ function parseArgs(argv: string[]): Args {
       case '--owner':
       case '--org':
         args.owners.push(...next().split(',').map((s) => s.trim()).filter(Boolean));
+        break;
+      case '--exclude-owner':
+      case '--exclude-org':
+        args.excludeOwners.push(...next().split(',').map((s) => s.trim()).filter(Boolean));
         break;
       case '--repo':
       case '--only':
@@ -98,6 +105,7 @@ function printHelp(): void {
 Usage: npm run snapshot -- [options]
 
   --owner <a,b>          Only scan these orgs/users
+  --exclude-owner <a,b>  Skip these orgs/users            (alias: --exclude-org)
   --repo <owner/name>    Only scan these repositories
   --include-archived     Include archived repositories
   --include-forks        Include forks
@@ -118,6 +126,7 @@ async function main(): Promise<void> {
 
   const { snapshot, file, openAlerts } = await runSnapshot({
     owners: args.owners,
+    excludeOwners: args.excludeOwners,
     only: args.only,
     includeArchived: args.includeArchived,
     includeForks: args.includeForks,

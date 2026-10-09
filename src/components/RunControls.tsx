@@ -46,6 +46,23 @@ interface RunStatus {
   } | null;
 }
 
+const EXCLUDE_KEY = 'dependash:excludeOwners';
+
+interface OwnerEntry {
+  login: string;
+  type: 'User' | 'Organization';
+  repos: number | null;
+}
+
+/** Fetched owners plus any skipped ones that no longer show up (so they can be un-skipped). */
+function pickerOwners(owners: OwnerEntry[], excluded: string[]): OwnerEntry[] {
+  const known = new Set(owners.map((o) => o.login.toLowerCase()));
+  const missing = excluded
+    .filter((e) => !known.has(e.toLowerCase()))
+    .map((login): OwnerEntry => ({ login, type: 'Organization', repos: null }));
+  return [...owners, ...missing];
+}
+
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.round(diff / 60_000);
@@ -64,6 +81,11 @@ export default function RunControls() {
   const [starting, setStarting] = useState(false);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [includeForks, setIncludeForks] = useState(false);
+  const [excluded, setExcluded] = useState<string[]>([]);
+  const [owners, setOwners] = useState<OwnerEntry[] | null>(null);
+  const [ownersError, setOwnersError] = useState<string | null>(null);
+  const [showSkip, setShowSkip] = useState(false);
+  const skipRef = useRef<HTMLDivElement>(null);
   const wasRunning = useRef(false);
 
   const loadStatus = useCallback(async () => {
@@ -78,6 +100,56 @@ export default function RunControls() {
     wasRunning.current = data.running;
     return data;
   }, [router]);
+
+  // Remember the skip list across reloads (per browser; best-effort).
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(EXCLUDE_KEY) ?? '';
+      setExcluded(saved.split(',').map((o) => o.trim()).filter(Boolean));
+    } catch {
+      /* storage unavailable */
+    }
+  }, []);
+
+  const toggleExcluded = (login: string) => {
+    setExcluded((prev) => {
+      const isSkipped = prev.some((o) => o.toLowerCase() === login.toLowerCase());
+      const next = isSkipped
+        ? prev.filter((o) => o.toLowerCase() !== login.toLowerCase())
+        : [...prev, login];
+      try {
+        localStorage.setItem(EXCLUDE_KEY, next.join(','));
+      } catch {
+        /* storage unavailable */
+      }
+      return next;
+    });
+  };
+
+  // Load the owner list the first time the picker opens.
+  useEffect(() => {
+    if (!showSkip || owners) return;
+    fetch('/api/owners', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((data: { owners: OwnerEntry[]; error: string | null }) => {
+        setOwners(data.owners ?? []);
+        setOwnersError(data.error);
+      })
+      .catch((err: Error) => {
+        setOwners([]);
+        setOwnersError(err.message);
+      });
+  }, [showSkip, owners]);
+
+  // Close the picker on outside click.
+  useEffect(() => {
+    if (!showSkip) return;
+    const onDown = (e: MouseEvent) => {
+      if (skipRef.current && !skipRef.current.contains(e.target as Node)) setShowSkip(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [showSkip]);
 
   useEffect(() => {
     fetch('/api/auth', { cache: 'no-store' })
@@ -101,7 +173,11 @@ export default function RunControls() {
     const res = await fetch('/api/snapshot', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ includeArchived, includeForks }),
+      body: JSON.stringify({
+        includeArchived,
+        includeForks,
+        excludeOwners: excluded,
+      }),
     });
     if (!res.ok) {
       setStarting(false);
@@ -140,6 +216,34 @@ export default function RunControls() {
         />
         forks
       </label>
+      <div className="skip-picker" ref={skipRef}>
+        <button className="pg" disabled={running} onClick={() => setShowSkip((v) => !v)}>
+          skip orgs{excluded.length ? ` (${excluded.length})` : ''} ▾
+        </button>
+        {showSkip && (
+          <div className="skip-menu">
+            {owners === null && <div className="muted">loading…</div>}
+            {ownersError && <div className="muted" title={ownersError}>couldn’t load orgs from GitHub</div>}
+            {pickerOwners(owners ?? [], excluded).map((o) => (
+              <label key={o.login} className="opt">
+                <input
+                  type="checkbox"
+                  checked={excluded.some((e) => e.toLowerCase() === o.login.toLowerCase())}
+                  onChange={() => toggleExcluded(o.login)}
+                />
+                {o.login}
+                <span className="muted">
+                  {o.type === 'User' ? ' · user' : ''}
+                  {o.repos != null ? ` · ${o.repos} repos` : ''}
+                </span>
+              </label>
+            ))}
+            {owners?.length === 0 && excluded.length === 0 && !ownersError && (
+              <div className="muted">no orgs found</div>
+            )}
+          </div>
+        )}
+      </div>
 
       {latest ? (
         <span className="muted">
