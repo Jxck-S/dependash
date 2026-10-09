@@ -30,6 +30,8 @@ export interface ClientOptions {
 export interface CollectOptions {
   /** Restrict to these owners (users or orgs). Empty = everything visible. */
   owners?: string[];
+  /** Skip repos owned by these orgs/users. Applied after `owners`. */
+  excludeOwners?: string[];
   /** owner,collaborator,organization_member */
   affiliation?: string;
   includeArchived?: boolean;
@@ -190,6 +192,12 @@ export class GitHubClient {
     return rl.resources.core;
   }
 
+  /** Orgs the token's user belongs to (needs `read:org` for private memberships). */
+  async listOrgs(): Promise<string[]> {
+    const orgs = await this.paginate<{ login: string }>('/user/orgs?per_page=100');
+    return orgs.map((o) => o.login);
+  }
+
   /** List repositories visible to the token. */
   async listRepos(opts: CollectOptions): Promise<RawRepo[]> {
     const affiliation = opts.affiliation ?? 'owner,collaborator,organization_member';
@@ -233,6 +241,12 @@ export class GitHubClient {
     if (opts.only?.length) {
       const wanted = new Set(opts.only.map((s) => s.toLowerCase()));
       list = list.filter((r) => wanted.has(r.full_name.toLowerCase()));
+    }
+    if (opts.excludeOwners?.length) {
+      const skip = new Set(opts.excludeOwners.map((s) => s.toLowerCase()));
+      const before = list.length;
+      list = list.filter((r) => !skip.has(r.owner.login.toLowerCase()));
+      this.log(`excluded ${before - list.length} repos from ${[...skip].join(', ')}`);
     }
     if (!opts.includeArchived) list = list.filter((r) => !r.archived);
     if (!opts.includeForks) list = list.filter((r) => !r.fork);

@@ -380,6 +380,32 @@ select {
   cursor: pointer;
 }
 
+.skip-picker {
+  position: relative;
+}
+
+.skip-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 220px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+}
+
+.skip-menu .opt {
+  white-space: nowrap;
+}
+
 button.run-btn {
   display: inline-flex;
   align-items: center;

@@ -180,7 +180,8 @@ This is the part that makes dependash different from an org security dashboard. 
 | Archived repos | ⬜ excluded by default — `--include-archived` or the **archived** checkbox |
 
 Narrow it with `--affiliation owner` (just yours), `--affiliation organization_member` (just org
-repos), or `--owner some-org`. In the UI, the scope selector does the same thing interactively.
+repos), or `--owner some-org`. Skip an org with `--exclude-org some-org` (or tick it in the **skip orgs**
+dropdown next to *Fetch now*, which lists your orgs from GitHub plus any owner seen in the last fetch). In the UI, the scope selector does the same thing interactively.
 
 > Alerts require read access to a repo's security data. For org repos, that usually means being an
 > owner/admin or having been granted the *security manager* role — otherwise the repo appears with
@@ -192,6 +193,7 @@ repos), or `--owner some-org`. In the UI, the scope selector does the same thing
 npm run snapshot -- --help
 
   --owner <a,b>          Only scan these orgs/users
+  --exclude-owner <a,b>  Skip these orgs/users            (alias: --exclude-org)
   --repo <owner/name>    Only scan these repositories
   --include-archived     Include archived repositories
   --include-forks        Include forks

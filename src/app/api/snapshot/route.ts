@@ -68,7 +68,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: { owners?: string[]; includeArchived?: boolean; includeForks?: boolean } = {};
+  let body: {
+    owners?: string[];
+    excludeOwners?: string[];
+    includeArchived?: boolean;     includeForks?: boolean;
+  } = {};
   try {
     body = await req.json();
   } catch {
@@ -89,6 +93,9 @@ export async function POST(req: NextRequest) {
   // Fire and forget; the client polls GET for progress.
   void runSnapshot({
     owners: body.owners,
+    excludeOwners: Array.isArray(body.excludeOwners)
+      ? body.excludeOwners.filter((o): o is string => typeof o === 'string' && o.trim() !== '').map((o) => o.trim())
+      : undefined,
     includeArchived: body.includeArchived,
     includeForks: body.includeForks,
     log: (msg) => appendLog(msg),

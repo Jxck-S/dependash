@@ -91,7 +91,8 @@ export async function runSnapshot(opts: RunOptions = {}): Promise<RunResult> {
     }
 
     const byName = new Map(repos.map((r) => [r.fullName, r]));
-    alerts = external;
+    // Drop external alerts for repos that were filtered out (e.g. excluded owners).
+    alerts = external.filter((a) => byName.has(a.repo));
     for (const a of alerts) {
       const repo = byName.get(a.repo);
       if (!repo) continue;
