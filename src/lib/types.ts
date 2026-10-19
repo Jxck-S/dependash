@@ -18,6 +18,12 @@ export function emptySeverityCounts(): SeverityCounts {
   return { critical: 0, high: 0, medium: 0, low: 0 };
 }
 
+/** YYYY-MM-DD in local time. */
+export function localDateString(d = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 /** A single Dependabot alert, normalized from the GitHub REST API. */
 export interface AlertRecord {
   /** Stable key across snapshots: "owner/repo#number". */

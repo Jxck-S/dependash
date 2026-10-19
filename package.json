@@ -2,7 +2,7 @@
   "name": "dependash",
   "version": "1.0.0",
   "private": true,
-  "description": "Local-only Dependabot dashboard: snapshots GitHub Dependabot state to JSON files and renders trends.",
+  "description": "One dashboard for every Dependabot alert you can see. Runs locally or hosted with GitHub sign-in.",
   "scripts": {
     "snapshot": "tsx scripts/snapshot.ts",
     "demo": "tsx scripts/demo.ts",

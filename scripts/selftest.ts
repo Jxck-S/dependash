@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 /**
- * Dependency-free self-test for the aggregation engine.
+ * Dependency-free self-test for the aggregation engine and the hosted-mode
+ * session cookie.
  *
  *   npx tsx scripts/selftest.ts
  *
@@ -17,6 +18,8 @@ import {
 } from '../src/lib/metrics';
 import { applyScope, buildOwnerOptions, normalizeScope } from '../src/lib/scope';
 import { AlertRecord, RepoRecord, Snapshot, emptySeverityCounts } from '../src/lib/types';
+import { buildDemoSnapshot } from '../src/lib/demo';
+import { sealSession, unsealSession } from '../src/lib/session';
 
 function iso(date: string): string {
   return `${date}T12:00:00Z`;
@@ -350,6 +353,36 @@ check('an empty fetch degrades gracefully', () => {
   assert.equal(none.fetchedAt, null);
   assert.equal(none.totals.openAlerts, 0);
   assert.deepEqual(none.daily, []);
+});
+
+check('the demo snapshot is deterministic and self-consistent', () => {
+  const a = buildDemoSnapshot();
+  const b = buildDemoSnapshot();
+  assert.equal(a.repos.length, 14);
+  assert.deepEqual(
+    a.alerts.map((x) => x.key),
+    b.alerts.map((x) => x.key),
+  );
+  const open = a.alerts.filter((x) => x.state === 'open').length;
+  assert.equal(a.repos.reduce((n, r) => n + r.openAlerts, 0), open);
+});
+
+process.env.SESSION_SECRET = 'selftest-secret-selftest-secret-selftest';
+const future = Math.floor(Date.now() / 1000) + 60;
+
+check('a sealed session round-trips', () => {
+  const back = unsealSession(sealSession({ token: 'gho_x', login: 'tester', exp: future }));
+  assert.deepEqual(back, { token: 'gho_x', login: 'tester', exp: future });
+});
+check('a tampered, expired or foreign session is rejected', () => {
+  const sealed = sealSession({ token: 'gho_x', login: 'tester', exp: future });
+  const flipped = `${sealed.slice(0, 20)}${sealed[20] === 'A' ? 'B' : 'A'}${sealed.slice(21)}`;
+  assert.equal(unsealSession(flipped), null);
+  assert.equal(unsealSession(sealSession({ token: 'gho_x', login: 'tester', exp: 1 })), null);
+  assert.equal(unsealSession('not-a-session'), null);
+  assert.equal(unsealSession(undefined), null);
+  process.env.SESSION_SECRET = 'a-different-secret-a-different-secret';
+  assert.equal(unsealSession(sealed), null);
 });
 
 console.log(`\n${passed} checks passed\n`);

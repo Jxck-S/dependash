@@ -4,10 +4,12 @@ import { Suspense } from 'react';
 import './globals.css';
 import NavTabs from '@/components/NavTabs';
 import RunControls from '@/components/RunControls';
+import DataProvider from '@/components/DataProvider';
+import Loading from '@/components/Loading';
 
 export const metadata: Metadata = {
   title: 'dependash',
-  description: 'Local-only Dependabot dashboard',
+  description: 'One dashboard for every Dependabot alert you can see',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -25,8 +27,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <NavTabs />
             </Suspense>
           </header>
-          <RunControls />
-          {children}
+          <DataProvider>
+            <RunControls />
+            <Suspense fallback={<Loading />}>{children}</Suspense>
+          </DataProvider>
         </div>
       </body>
     </html>

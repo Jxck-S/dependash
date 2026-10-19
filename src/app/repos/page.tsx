@@ -1,17 +1,15 @@
-import { getDashboardData, resolveScope } from '@/lib/data';
+'use client';
+
+import { useDashboard } from '@/components/DataProvider';
+import Loading from '@/components/Loading';
 import RepoTable from '@/components/RepoTable';
 import EmptyState from '@/components/EmptyState';
 import ScopeBar from '@/components/ScopeBar';
 import { StatCard } from '@/components/Ui';
 
-export const dynamic = 'force-dynamic';
-
-export default async function ReposPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ scope?: string }>;
-}) {
-  const data = getDashboardData(resolveScope((await searchParams).scope));
+export default function ReposPage() {
+  const data = useDashboard();
+  if (!data) return <Loading />;
   if (!data.hasHistory || !data.latest) return <EmptyState />;
 
   const { totals } = data;

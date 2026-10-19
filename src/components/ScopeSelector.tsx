@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Owner scope selector. Writes ?scope=… into the URL so the server recomputes
+ * Owner scope selector. Writes ?scope=… into the URL so the dashboard recomputes
  * every metric for the chosen slice (personal / orgs / a single owner) and the
  * choice survives refreshes, bookmarks and tab switches.
  */
