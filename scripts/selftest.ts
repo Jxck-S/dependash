@@ -400,13 +400,14 @@ check('exports put the repo with the most severe alert first', () => {
 check('within a repo, alerts are listed most severe first', () => {
   const md = alertsMarkdown(exportAlerts);
   assert.ok(md.indexOf('`requests`') < md.indexOf('`lodash`'));
-  assert.match(md, /fix: upgrade to >= 2\.32\.0/);
+  assert.match(md, /patched in 2\.32\.0/);
   assert.match(md, /no patched version yet/);
 });
 check('the agent prompt carries instructions and every alert', () => {
   const prompt = agentFixPrompt(exportAlerts, new Date('2026-10-21T00:00:00Z'));
   assert.match(prompt, /fix\/dependabot-alerts-2026-10-21/);
   assert.match(prompt, /gh pr create/);
+  assert.match(prompt, /direct, top-level dependencies/);
   assert.match(prompt, /4 in 3 repositories/);
   for (const a of exportAlerts) assert.ok(prompt.includes(a.htmlUrl), a.key);
 });

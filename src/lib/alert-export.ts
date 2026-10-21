@@ -26,7 +26,7 @@ function alertLine(a: AlertRecord): string {
   const where = [a.ecosystem, a.manifestPath, a.scope === 'development' ? 'dev dependency' : null]
     .filter(Boolean)
     .join(', ');
-  const fix = a.firstPatchedVersion ? `fix: upgrade to >= ${a.firstPatchedVersion}` : 'no patched version yet';
+  const fix = a.firstPatchedVersion ? `patched in ${a.firstPatchedVersion}` : 'no patched version yet';
   const ids = [a.ghsaId, a.cveId].filter(Boolean).join(' / ');
   return (
     `- **${a.severity.toUpperCase()}** \`${a.packageName}\` (${where}) — ${a.summary}\n` +
@@ -50,21 +50,27 @@ export function repoNames(alerts: AlertRecord[]): string {
 export function agentFixPrompt(alerts: AlertRecord[], now = new Date()): string {
   const repos = groupByRepo(alerts).length;
   const date = now.toISOString().slice(0, 10);
-  return `You are a software engineer with authenticated GitHub access (the \`gh\` CLI and git) to the repositories below. Fix the open Dependabot security alerts listed at the end, one pull request per repository.
+  return `You are a software engineer with authenticated GitHub access (the \`gh\` CLI and git) to the repositories below. Fix the open Dependabot security alerts listed at the end by bringing each repository's dependencies up to date — one pull request per repository.
+
+## Approach: update from the top down
+
+Fix alerts by updating the project's **direct, top-level dependencies** to their latest stable versions, not by patching each vulnerable package in isolation. Most alerts are in transitive dependencies that a current version of the parent package already pulls in fixed, and keeping everything current prevents the next batch of alerts. Bigger upgrades — including new major versions — are expected; handle their breaking changes rather than avoiding them.
 
 ## How to work
 
-1. **Order:** work through the repositories in the order listed — they are sorted most severe first. Within a repository, fix critical and high alerts before medium and low.
-2. **Confirm first:** before changing anything, check each alert is still open, e.g. \`gh api repos/OWNER/REPO/dependabot/alerts/NUMBER --jq .state\`. Skip alerts that are already fixed or dismissed.
+1. **Order:** work through the repositories in the order listed — they are sorted most severe first.
+2. **Confirm first:** check each alert is still open, e.g. \`gh api repos/OWNER/REPO/dependabot/alerts/NUMBER --jq .state\`. Skip alerts that are already fixed or dismissed.
 3. **For each repository:**
    1. Clone it (or pull its default branch) and create a branch named \`fix/dependabot-alerts-${date}\`.
-   2. Upgrade each vulnerable package to at least the patched version shown, using the project's own package manager so lockfiles are regenerated (npm/pnpm/yarn, pip/poetry/uv, bundler, cargo, go modules, maven/gradle, …). For a transitive dependency, upgrade the direct dependency that pulls it in; if none fixes it, use the ecosystem's override or resolution mechanism.
-   3. Prefer the smallest upgrade that fixes the advisory. If it needs a new major version, read the changelog or migration notes and update the code for any breaking changes.
-   4. Install, build, lint and run the test suite. Fix anything the upgrades broke. If there are no tests, at least build and start the application and check it for errors.
-   5. Check the upgrades didn't introduce new problems: run the ecosystem's audit tool (\`npm audit\`, \`pip-audit\`, \`cargo audit\`, \`bundle audit\`, \`govulncheck\`, …), confirm the targeted advisories are gone, and that no new vulnerabilities or peer-dependency conflicts appeared.
-   6. Commit with a message naming the advisories fixed, push the branch, and open a pull request with \`gh pr create\` against the default branch. In the description, list each alert fixed (severity, package, old → new version, GHSA/CVE, alert link), what you ran to test it, and any breaking changes or follow-ups.
-4. **Don't** push to default branches, merge pull requests, or dismiss alerts. If an alert has no patched version, or can't be upgraded safely, leave it and explain why.
-5. **When finished,** reply with a table: repository, pull request link, alerts fixed, alerts skipped and why.
+   2. Find which direct dependency brings in each vulnerable package (\`npm ls <pkg>\`, \`pip show\`/\`pipdeptree\`, \`cargo tree -i <pkg>\`, \`go mod why\`, \`mvn dependency:tree\`, …). Start with the parents of critical and high alerts.
+   3. Update direct dependencies to their latest stable releases with the project's own package manager, so manifests and lockfiles are regenerated together (npm/pnpm/yarn, pip/poetry/uv, bundler, cargo, go modules, maven/gradle, …). Update the framework or runtime-level packages first, then the libraries that depend on them. Update the rest of the direct dependencies too, so the project ends up current — not just the ones tied to an alert.
+   4. For major-version upgrades, read the changelog or migration guide and update the code, config and types for the breaking changes. If the toolchain itself needs a newer version (Node, Python, Go, Java, …), update its version files and CI config to match.
+   5. Only if a vulnerable package still isn't fixed after its parents are current, pin it with the ecosystem's override or resolution mechanism, and leave a comment saying why.
+   6. Install, build, lint and run the full test suite. Fix everything the updates broke. If there are no tests, build and start the application and exercise its main paths to check for errors.
+   7. Check the updates didn't introduce new problems: run the ecosystem's audit tool (\`npm audit\`, \`pip-audit\`, \`cargo audit\`, \`bundle audit\`, \`govulncheck\`, …) and confirm the listed advisories are gone, with no new vulnerabilities, peer-dependency conflicts or deprecation errors.
+   8. Commit, push the branch, and open a pull request with \`gh pr create\` against the default branch. In the description, list each alert fixed (severity, package, GHSA/CVE, alert link) and which update fixed it, every direct dependency updated (old → new version, majors called out), the breaking changes you handled, what you ran to test it, and any follow-ups.
+4. **Don't** push to default branches, merge pull requests, or dismiss alerts. If an update can't be made safely, or an alert has no fixed version, leave it and explain why.
+5. **When finished,** reply with a table: repository, pull request link, alerts fixed, major upgrades made, alerts skipped and why.
 
 ## Open Dependabot alerts (${alerts.length} in ${repos} ${repos === 1 ? 'repository' : 'repositories'}, exported from dependash on ${date})
 
