@@ -12,6 +12,18 @@ dependash takes the other approach: it logs in **as you**, walks every repositor
 reach, and puts the whole picture in one place. Nothing has to be moved into an org, and no
 repository is modified in any way.
 
+## Use it hosted, or run it yourself
+
+| | |
+| --- | --- |
+| ☁️ **Hosted — [dependash.vercel.app](https://dependash.vercel.app)** | Sign in with GitHub and click **Fetch now**. Nothing to install. Your token stays in an encrypted, HttpOnly cookie, your alert data stays in your own browser, and the server only forwards read-only `GET` requests to GitHub. Not ready to sign in? Hit **Try the live demo** on the home page. |
+| 💻 **Run it yourself** | Clone it and `npm run dev` — it uses your local `gh` token and talks to GitHub straight from your machine. See [Quick start](#1-quick-start). Want your own hosted copy for a team? [Deploy it to Vercel](#8-hosting-it-sign-in-with-github) with your own OAuth App. |
+
+> **Hosted sign-in and orgs:** GitHub only exposes private-repo alerts through the broad `repo`
+> OAuth scope, so that's what the hosted version requests — dependash only ever reads. Orgs that
+> restrict third-party apps need to approve dependash before their repos show up; you can request
+> that on GitHub's sign-in screen. If you'd rather not grant either, run it yourself.
+
 ![dependash overview](docs/screenshot.png)
 
 <sub>Screenshots use generated demo data — see [Try it without a token](#try-it-without-a-token).</sub>
