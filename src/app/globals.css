@@ -406,7 +406,8 @@ select {
   white-space: nowrap;
 }
 
-button.run-btn {
+button.run-btn,
+a.run-btn {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -415,7 +416,8 @@ button.run-btn {
   color: var(--accent);
 }
 
-button.run-btn:hover:not(:disabled) {
+button.run-btn:hover:not(:disabled),
+a.run-btn:hover {
   background: rgba(79, 156, 249, 0.12);
 }
 
@@ -485,7 +487,8 @@ button.run-btn:hover:not(:disabled) {
   font-size: 12px;
 }
 
-button.pg {
+button.pg,
+a.pg {
   background: var(--panel-2);
   color: var(--text);
   border: 1px solid var(--border);
@@ -493,6 +496,7 @@ button.pg {
   padding: 5px 11px;
   cursor: pointer;
   font-size: 12px;
+  text-decoration: none;
 }
 button.pg:disabled {
   opacity: 0.4;

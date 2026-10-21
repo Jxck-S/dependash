@@ -4,47 +4,31 @@
  * Header control strip: shows who we're authenticated as, when the data was
  * last fetched, and lets you pull fresh data without leaving the UI.
  *
- * While a run is in progress it polls /api/snapshot for log lines, then calls
- * router.refresh() so the server components re-read the last fetch and every metric
- * updates in place.
+ * The fetch runs right here in the browser: the shared collector walks every
+ * repo through the same-origin /api/gh proxy (which attaches the token
+ * server-side), then the result is saved and every page recomputes in place.
+ * In hosted mode, signed-out visitors get a "Sign in with GitHub" button.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
+import { collectSnapshot } from '@/lib/collect';
+import { GitHubClient } from '@/lib/github';
+import { useData } from './DataProvider';
 
-interface AuthInfo {
-  authenticated: boolean;
-  viewer?: string;
-  source: string;
-  detail: string;
-  transport?: string;
-  rateLimit?: { remaining: number; limit: number };
-  hint?: string;
-  error?: string;
+interface RunResult {
+  reposScanned: number;
+  reposWithAlertsEnabled: number;
+  openAlerts: number;
+  durationMs: number;
+  warnings: number;
 }
 
-interface RunStatus {
-  running: boolean;
-  startedAt: string | null;
-  finishedAt: string | null;
-  logs: string[];
-  error: string | null;
-  result: {
-    date: string;
-    reposScanned: number;
-    reposWithAlertsEnabled: number;
-    openAlerts: number;
-    durationMs: number;
-    warnings: number;
-  } | null;
-  latest: {
-    date: string;
-    takenAt: string;
-    viewer: string;
-    reposScanned: number;
-    openAlerts: number;
-  } | null;
-}
+const AUTH_ERRORS: Record<string, string> = {
+  access_denied: 'GitHub sign-in was cancelled.',
+  invalid_state: 'Sign-in expired or was tampered with — please try again.',
+  token_exchange_failed: 'GitHub didn’t accept the sign-in code — please try again.',
+  profile_failed: 'Signed in, but couldn’t read your GitHub profile.',
+};
 
 const EXCLUDE_KEY = 'dependash:excludeOwners';
 
@@ -74,11 +58,12 @@ function relativeTime(iso: string): string {
 }
 
 export default function RunControls() {
-  const router = useRouter();
-  const [auth, setAuth] = useState<AuthInfo | null>(null);
-  const [status, setStatus] = useState<RunStatus | null>(null);
+  const { auth, snapshot, saveSnapshot, signOut, refreshAuth } = useData();
+  const [running, setRunning] = useState(false);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<RunResult | null>(null);
   const [showLog, setShowLog] = useState(false);
-  const [starting, setStarting] = useState(false);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [includeForks, setIncludeForks] = useState(false);
   const [excluded, setExcluded] = useState<string[]>([]);
@@ -86,20 +71,20 @@ export default function RunControls() {
   const [ownersError, setOwnersError] = useState<string | null>(null);
   const [showSkip, setShowSkip] = useState(false);
   const skipRef = useRef<HTMLDivElement>(null);
-  const wasRunning = useRef(false);
 
-  const loadStatus = useCallback(async () => {
-    const res = await fetch('/api/snapshot', { cache: 'no-store' });
-    const data: RunStatus = await res.json();
-    setStatus(data);
-    // A run just finished — pull the new numbers into the page.
-    if (wasRunning.current && !data.running) {
-      router.refresh();
-      setStarting(false);
-    }
-    wasRunning.current = data.running;
-    return data;
-  }, [router]);
+  const hosted = auth?.mode === 'hosted';
+  const canFetch = Boolean(auth?.authenticated);
+
+  // Surface a failed OAuth round-trip (?auth_error=…), then drop it from the URL.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const code = url.searchParams.get('auth_error');
+    if (!code) return;
+    setError(AUTH_ERRORS[code] ?? `Sign-in failed (${code}).`);
+    setShowLog(true);
+    url.searchParams.delete('auth_error');
+    window.history.replaceState(null, '', url.toString());
+  }, []);
 
   // Remember the skip list across reloads (per browser; best-effort).
   useEffect(() => {
@@ -126,20 +111,44 @@ export default function RunControls() {
     });
   };
 
-  // Load the owner list the first time the picker opens.
+  // Load the owner list the first time the picker opens: the viewer's orgs
+  // from GitHub, plus any other owner seen in the last fetch.
   useEffect(() => {
     if (!showSkip || owners) return;
-    fetch('/api/owners', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((data: { owners: OwnerEntry[]; error: string | null }) => {
-        setOwners(data.owners ?? []);
-        setOwnersError(data.error);
+    const found = new Map<string, OwnerEntry>();
+    const viewer = auth?.viewer ?? snapshot?.meta.viewer ?? null;
+    for (const r of snapshot?.repos ?? []) {
+      const key = r.owner.toLowerCase();
+      const entry = found.get(key) ?? {
+        login: r.owner,
+        type: r.ownerType ?? (key === viewer?.toLowerCase() ? 'User' : 'Organization'),
+        repos: 0,
+      };
+      entry.repos = (entry.repos ?? 0) + 1;
+      found.set(key, entry);
+    }
+    const finish = (err: string | null) => {
+      // The viewer's own account first, then orgs, then other users.
+      const rank = (o: OwnerEntry) =>
+        viewer && o.login.toLowerCase() === viewer.toLowerCase() ? 0 : o.type === 'Organization' ? 1 : 2;
+      setOwners([...found.values()].sort((a, b) => rank(a) - rank(b) || a.login.localeCompare(b.login)));
+      setOwnersError(err);
+    };
+    if (!canFetch) {
+      finish(null);
+      return;
+    }
+    new GitHubClient({ baseUrl: '/api/gh' })
+      .listOrgs()
+      .then((orgs) => {
+        for (const login of orgs) {
+          const key = login.toLowerCase();
+          if (!found.has(key)) found.set(key, { login, type: 'Organization', repos: null });
+        }
+        finish(null);
       })
-      .catch((err: Error) => {
-        setOwners([]);
-        setOwnersError(err.message);
-      });
-  }, [showSkip, owners]);
+      .catch((err: Error) => finish(err.message));
+  }, [showSkip, owners, auth?.viewer, canFetch, snapshot]);
 
   // Close the picker on outside click.
   useEffect(() => {
@@ -151,52 +160,53 @@ export default function RunControls() {
     return () => document.removeEventListener('mousedown', onDown);
   }, [showSkip]);
 
-  useEffect(() => {
-    fetch('/api/auth', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then(setAuth)
-      .catch(() => setAuth(null));
-    void loadStatus();
-  }, [loadStatus]);
-
-  // Poll while a fetch is running.
-  useEffect(() => {
-    if (!status?.running && !starting) return;
-    const id = setInterval(() => void loadStatus(), 1200);
-    return () => clearInterval(id);
-  }, [status?.running, starting, loadStatus]);
-
   const run = async () => {
-    setStarting(true);
+    setRunning(true);
     setShowLog(true);
-    wasRunning.current = true;
-    const res = await fetch('/api/snapshot', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+    setLogs([]);
+    setError(null);
+    setResult(null);
+    const log = (line: string) => setLogs((prev) => [...prev, line].slice(-200));
+    try {
+      const client = new GitHubClient({ baseUrl: '/api/gh', log, maxAlertPages: 20 });
+      const next = await collectSnapshot(client, {
         includeArchived,
         includeForks,
         excludeOwners: excluded,
-      }),
-    });
-    if (!res.ok) {
-      setStarting(false);
-      const body = await res.json().catch(() => ({ error: 'Failed to start' }));
-      setStatus((s) => (s ? { ...s, error: body.error } : s));
-      return;
+        log,
+      });
+      await saveSnapshot(next);
+      setResult({
+        reposScanned: next.meta.reposScanned,
+        reposWithAlertsEnabled: next.meta.reposWithAlertsEnabled,
+        openAlerts: next.alerts.filter((a) => a.state === 'open').length,
+        durationMs: next.meta.durationMs,
+        warnings: next.meta.errors.length,
+      });
+      setOwners(null);
+      void refreshAuth(); // updates the rate-limit counter
+    } catch (err) {
+      log(`failed: ${(err as Error).message}`);
+      setError((err as Error).message);
+    } finally {
+      setRunning(false);
     }
-    void loadStatus();
   };
 
-  const running = Boolean(status?.running) || starting;
-  const latest = status?.latest;
-  const logs = status?.logs ?? [];
+  const latest = snapshot?.meta;
+  const latestOpen = snapshot?.alerts.filter((a) => a.state === 'open').length ?? 0;
 
   return (
     <div className="run-bar">
-      <button className="pg run-btn" onClick={run} disabled={running || auth?.authenticated === false}>
-        {running ? <span className="spinner" /> : '⟳'} {running ? 'Fetching…' : 'Fetch now'}
-      </button>
+      {hosted && !auth?.authenticated ? (
+        <a className="pg run-btn" href="/api/auth/login">
+          Sign in with GitHub
+        </a>
+      ) : (
+        <button className="pg run-btn" onClick={run} disabled={running || !canFetch}>
+          {running ? <span className="spinner" /> : '⟳'} {running ? 'Fetching…' : 'Fetch now'}
+        </button>
+      )}
 
       <label className="opt" title="Archived repos are excluded by default">
         <input
@@ -248,10 +258,12 @@ export default function RunControls() {
       {latest ? (
         <span className="muted">
           Last fetched <strong>{relativeTime(latest.takenAt)}</strong> · {latest.reposScanned} repos ·{' '}
-          {latest.openAlerts} open
+          {latestOpen} open
         </span>
       ) : (
-        <span className="muted">No data yet — click “Fetch now”.</span>
+        <span className="muted">
+          {hosted && !auth?.authenticated ? 'Sign in to fetch your alerts.' : 'No data yet — click “Fetch now”.'}
+        </span>
       )}
 
       <span className="run-auth">
@@ -259,20 +271,25 @@ export default function RunControls() {
         {auth?.authenticated && (
           <>
             <span className="badge on">{auth.viewer}</span>
-            <span className="muted" title={auth.transport}>
+            <span className="muted" title="read-only GET requests via the /api/gh proxy">
               via {auth.source === 'gh-cli' ? 'gh CLI token' : auth.detail}
               {auth.rateLimit ? ` · ${auth.rateLimit.remaining}/${auth.rateLimit.limit} API calls left` : ''}
             </span>
+            {hosted && (
+              <button className="pg" disabled={running} onClick={() => void signOut()}>
+                Sign out
+              </button>
+            )}
           </>
         )}
-        {auth && !auth.authenticated && (
+        {auth && !auth.authenticated && !hosted && (
           <span className="badge off" title={auth.hint ?? auth.error ?? ''}>
             not authenticated
           </span>
         )}
       </span>
 
-      {(logs.length > 0 || status?.error) && (
+      {(logs.length > 0 || error) && (
         <button className="pg" onClick={() => setShowLog((v) => !v)}>
           {showLog ? 'Hide log' : 'Show log'}
         </button>
@@ -280,19 +297,18 @@ export default function RunControls() {
 
       {showLog && (
         <div className="run-log">
-          {status?.error && <div style={{ color: 'var(--critical)' }}>✗ {status.error}</div>}
-          {auth && !auth.authenticated && (
+          {error && <div style={{ color: 'var(--critical)' }}>✗ {error}</div>}
+          {auth && !auth.authenticated && !hosted && (
             <div style={{ color: 'var(--medium)' }}>{auth.hint ?? auth.error}</div>
           )}
           {logs.map((line, i) => (
             <div key={i}>{line}</div>
           ))}
-          {status?.result && !status.running && (
+          {result && !running && (
             <div style={{ color: 'var(--good)' }}>
-              ✓ {status.result.reposScanned} repos ·{' '}
-              {status.result.reposWithAlertsEnabled} with Dependabot · {status.result.openAlerts} open
-              alerts · {(status.result.durationMs / 1000).toFixed(1)}s
-              {status.result.warnings ? ` · ${status.result.warnings} warnings` : ''}
+              ✓ {result.reposScanned} repos · {result.reposWithAlertsEnabled} with Dependabot ·{' '}
+              {result.openAlerts} open alerts · {(result.durationMs / 1000).toFixed(1)}s
+              {result.warnings ? ` · ${result.warnings} warnings` : ''}
             </div>
           )}
         </div>

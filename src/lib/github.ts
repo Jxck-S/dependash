@@ -4,9 +4,12 @@
  * Hard rule for this project: every request issued here is a GET. There are no
  * POST/PATCH/PUT/DELETE code paths, so the tool physically cannot modify a
  * repository, create a workflow, open a PR, or push a commit.
+ *
+ * Runs in Node (CLI) and in the browser (dashboard). In the browser it talks to
+ * the same-origin `/api/gh` proxy, which attaches the token server-side, so no
+ * token ever reaches page JavaScript.
  */
 
-import { execFileSync } from 'node:child_process';
 import {
   AlertRecord,
   AlertState,
@@ -17,10 +20,16 @@ import {
 } from './types';
 
 const API = 'https://api.github.com';
-const UA = 'dependash/1.0 (local-only)';
+const UA = 'dependash/1.0';
+
+/** Header the browser client sends to the `/api/gh` proxy. */
+export const PROXY_HEADER = 'x-dependash';
 
 export interface ClientOptions {
-  token: string;
+  /** Bearer token. Omit when `baseUrl` is the `/api/gh` proxy, which adds it. */
+  token?: string;
+  /** API root. Defaults to https://api.github.com. */
+  baseUrl?: string;
   /** Called with human-readable progress lines. */
   log?: (msg: string) => void;
   /** Max alert pages (100 alerts each) per repo. */
@@ -53,39 +62,11 @@ export class GitHubError extends Error {
   }
 }
 
-/**
- * Resolve a token without ever storing one in the repo:
- *   1. GITHUB_TOKEN / DEPENDASH_TOKEN / GH_TOKEN env var
- *   2. `gh auth token` from the GitHub CLI keychain
- */
-export function resolveToken(explicit?: string): string {
-  const fromEnv =
-    explicit ||
-    process.env.DEPENDASH_TOKEN ||
-    process.env.GITHUB_TOKEN ||
-    process.env.GH_TOKEN;
-  if (fromEnv && fromEnv.trim()) return fromEnv.trim();
-
-  try {
-    const out = execFileSync('gh', ['auth', 'token'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    if (out.trim()) return out.trim();
-  } catch {
-    /* fall through */
-  }
-
-  throw new Error(
-    'No GitHub token found. Either run `gh auth login` (recommended) or export ' +
-      'GITHUB_TOKEN=<classic PAT with repo + security_events scopes>.',
-  );
-}
-
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export class GitHubClient {
-  private readonly token: string;
+  private readonly token: string | undefined;
+  private readonly baseUrl: string;
   private readonly log: (msg: string) => void;
   private readonly maxAlertPages: number;
   /** Non-fatal problems collected during a run. */
@@ -93,6 +74,7 @@ export class GitHubClient {
 
   constructor(opts: ClientOptions) {
     this.token = opts.token;
+    this.baseUrl = opts.baseUrl ?? API;
     this.log = opts.log ?? (() => {});
     this.maxAlertPages = opts.maxAlertPages ?? 20;
   }
@@ -102,15 +84,23 @@ export class GitHubClient {
     init: { accept?: string } = {},
     attempt = 0,
   ): Promise<{ status: number; headers: Headers; body: unknown }> {
-    const url = path.startsWith('http') ? path : `${API}${path}`;
+    const url = path.startsWith('http') ? path : `${this.baseUrl}${path}`;
+    const headers: Record<string, string> = {
+      accept: init.accept ?? 'application/vnd.github+json',
+      'x-github-api-version': '2022-11-28',
+    };
+    if (this.token) {
+      headers.authorization = `Bearer ${this.token}`;
+      headers['user-agent'] = UA;
+    } else {
+      // Marks the request as coming from our own page; the proxy rejects
+      // requests without it (a cross-site link or form can't set headers).
+      headers[PROXY_HEADER] = '1';
+    }
     const res = await fetch(url, {
       method: 'GET', // read-only, always
-      headers: {
-        authorization: `Bearer ${this.token}`,
-        accept: init.accept ?? 'application/vnd.github+json',
-        'x-github-api-version': '2022-11-28',
-        'user-agent': UA,
-      },
+      headers,
+      cache: 'no-store',
     });
 
     // Primary rate limit exhausted or secondary rate limit: back off and retry.

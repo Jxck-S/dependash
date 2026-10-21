@@ -1,19 +1,14 @@
 /**
- * Server-side data access for the dashboard.
- *
- * This is the only place the UI touches the filesystem. It reads the single
- * last-fetch file, applies the selected owner scope, and runs the aggregation
- * engine. No network, no database, no GitHub writes.
+ * Turns the last fetch into everything a dashboard page renders: applies the
+ * selected owner scope and runs the aggregation engine. Pure — runs in the
+ * browser on whatever snapshot the DataProvider loaded.
  */
 
-import 'server-only';
-import { readSnapshot, snapshotFile } from './store';
 import { computeDashboardData } from './metrics';
 import { applyScope, buildOwnerOptions, normalizeScope } from './scope';
-import { DashboardData, OwnerScope, SCOPE_ALL } from './types';
+import { DashboardData, OwnerScope, SCOPE_ALL, Snapshot } from './types';
 
-export function getDashboardData(scope: OwnerScope = SCOPE_ALL): DashboardData {
-  const latest = readSnapshot();
+export function getDashboardData(latest: Snapshot | null, scope: OwnerScope = SCOPE_ALL): DashboardData {
   const owners = buildOwnerOptions(latest);
 
   // Fall back to "all" if the requested owner isn't present in the fetch.
@@ -24,11 +19,6 @@ export function getDashboardData(scope: OwnerScope = SCOPE_ALL): DashboardData {
 }
 
 /** Resolve a ?scope= search param into a valid scope value. */
-export function resolveScope(raw: string | string[] | undefined): OwnerScope {
-  return normalizeScope(raw);
-}
-
-/** Freshness info for the header: when we last fetched, and from where. */
-export function getFetchInfo(): { file: string; fetchedAt: string | null } {
-  return { file: snapshotFile(), fetchedAt: readSnapshot()?.meta.takenAt ?? null };
+export function resolveScope(raw: string | string[] | null | undefined): OwnerScope {
+  return normalizeScope(raw ?? undefined);
 }

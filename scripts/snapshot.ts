@@ -14,7 +14,7 @@
  * workflows, never modifies any repository.
  */
 
-import { runSnapshot } from '../src/lib/collect';
+import { runSnapshot } from '../src/lib/runner';
 import { emptySeverityCounts } from '../src/lib/types';
 
 interface Args {

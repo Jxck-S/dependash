@@ -1,4 +1,7 @@
-import { getDashboardData, resolveScope } from '@/lib/data';
+'use client';
+
+import { useDashboard } from '@/components/DataProvider';
+import Loading from '@/components/Loading';
 import { StatCard } from '@/components/Ui';
 import { SeverityTrendChart, SeverityPie, ChurnChart, EcosystemChart } from '@/components/Charts';
 import AlertTable from '@/components/AlertTable';
@@ -6,14 +9,9 @@ import TrendList from '@/components/TrendList';
 import EmptyState from '@/components/EmptyState';
 import ScopeBar from '@/components/ScopeBar';
 
-export const dynamic = 'force-dynamic';
-
-export default async function OverviewPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ scope?: string }>;
-}) {
-  const data = getDashboardData(resolveScope((await searchParams).scope));
+export default function OverviewPage() {
+  const data = useDashboard();
+  if (!data) return <Loading />;
   if (!data.hasHistory || !data.latest) return <EmptyState />;
 
   const { totals, latest } = data;

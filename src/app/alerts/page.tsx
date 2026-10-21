@@ -1,18 +1,16 @@
-import { getDashboardData, resolveScope } from '@/lib/data';
+'use client';
+
+import { useDashboard } from '@/components/DataProvider';
+import Loading from '@/components/Loading';
 import AlertTable from '@/components/AlertTable';
 import EmptyState from '@/components/EmptyState';
 import ScopeBar from '@/components/ScopeBar';
 import { StatCard } from '@/components/Ui';
 import { AgingChart } from '@/components/Charts';
 
-export const dynamic = 'force-dynamic';
-
-export default async function AlertsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ scope?: string }>;
-}) {
-  const data = getDashboardData(resolveScope((await searchParams).scope));
+export default function AlertsPage() {
+  const data = useDashboard();
+  if (!data) return <Loading />;
   if (!data.hasHistory || !data.latest) return <EmptyState />;
 
   const { totals } = data;

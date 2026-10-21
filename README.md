@@ -22,7 +22,7 @@ repository is modified in any way.
 | --- | --- |
 | 🔭 **Cross-account by design** | Personal + org + collaborator repos in a single view. Your access token is the only boundary. |
 | 🔒 **Read-only, provably** | Every GitHub call is an HTTP `GET`. No commits, PRs, workflows, Actions, or settings changes — there is no code path that can write. |
-| 🏠 **Runs on your machine** | A local Next.js app on `localhost:3939`. Your alert data never leaves your computer. |
+| 🏠 **Local or hosted** | Run it on `localhost:3939` with your `gh` token, or [deploy it to Vercel](#8-hosting-it-sign-in-with-github) so people sign in with GitHub. Either way there's no database: alert data stays on your machine or in each user's own browser. |
 | 📈 **History from a single fetch** | Trends, MTTR and fix velocity are reconstructed from the timestamps GitHub already stamps on every alert — no database, no scheduled jobs, no waiting weeks to collect data points. |
 | 🎯 **Triage-oriented** | Risk and health scores, alert aging, churn, ecosystem breakdown, and deep links straight to the alert or advisory on GitHub. |
 
@@ -98,30 +98,33 @@ the whole point.
 
 The header strip on every page shows:
 
-- **⟳ Fetch now** — runs the read-only collector in-process, streaming progress
-  (`scanned 80/127`) into an expandable log. When it finishes, the page refreshes itself and every
-  metric updates in place. No terminal, no restart, no rebuild.
+- **⟳ Fetch now** — runs the read-only collector **in your browser**, streaming progress
+  (`scanned 80/127`) into an expandable log. Each GitHub call goes through the same-origin
+  `/api/gh` proxy, which attaches the token server-side. When it finishes, the result is saved and
+  every metric updates in place. No terminal, no restart, no rebuild.
 - **Last fetched `<n>`m ago · `<n>` repos · `<n>` open** — how fresh the loaded data is.
 - **Auth badge** — the authenticated login, how the token was found (`gh CLI token` or the env var
   name), and remaining API quota.
 
-Guardrails on the run endpoint:
+Guardrails on the `/api/gh` proxy:
 
 | Guard | Behaviour |
 | --- | --- |
-| Loopback only | Requests whose `Host` isn't `localhost`/`127.0.0.1`/`::1` get `403`. Override with `DEPENDASH_ALLOW_REMOTE_RUN=1` if you self-host behind your own auth. |
-| One at a time | A second concurrent run returns `409`. |
+| GET only | The route exports a `GET` handler and nothing else; any other method gets `405`. |
+| Endpoint allowlist | Only the endpoints the collector reads (`/user`, `/user/repos`, `/user/orgs`, `/rate_limit`, `/orgs/:o/repos`, `/users/:u/repos`, `/repos/:o/:r/vulnerability-alerts`, `/repos/:o/:r/dependabot/alerts`). Anything else gets `403`. |
+| Same-page only | Requests must carry an `x-dependash` header, which a cross-site link, image or form can't add. |
+| Loopback only (local mode) | Requests whose `Host` isn't `localhost`/`127.0.0.1`/`::1` get `403`. Override with `DEPENDASH_ALLOW_REMOTE_RUN=1` if you self-host behind your own auth. |
+| Session only (hosted mode) | Uses the signed-in user's token from their session cookie and never the server's environment, so nobody can borrow the operator's token. |
 | No shell from the browser | The `--dependamate` external-command option is deliberately **not** exposed over HTTP; it's CLI-only. |
-| Still read-only | It calls the same collector, so GitHub only ever sees `GET` requests. |
 
 ### How data refreshes
 
 Two decoupled steps — nothing polls GitHub in the background:
 
 1. **Collection** happens only when you trigger it (button or CLI). It overwrites the single
-   last-fetch file.
-2. **Rendering** re-reads that file on *every* request (`dynamic = 'force-dynamic'`, no caching),
-   so a reload — or the automatic refresh after a UI run — always shows the latest fetch.
+   last fetch — the file in local mode, the browser's IndexedDB in hosted mode.
+2. **Rendering** loads that fetch when the page opens and computes every metric in the browser,
+   so a reload — or the in-place update after a UI run — always shows the latest fetch.
 
 An idle browser tab does not update on its own; use the button (or reload) to pull in new data.
 
@@ -132,13 +135,16 @@ An idle browser tab does not update on its own; use the button (or reload) to pu
 | `npm run snapshot` | Read-only scan of GitHub → overwrites the single last-fetch file |
 | `npm run demo` | Generate synthetic data to explore the UI without a token |
 | `npm run dev` | Dashboard in dev mode on port 3939 |
-| `npm run build && npm start` | Production build (for hosting on your own box) |
+| `npm run build && npm start` | Production build (local mode, or hosted mode when `GITHUB_CLIENT_ID` is set) |
 | `npm test` | Self-test of the metrics/trend engine (no network) |
 | `npm run typecheck` | `tsc --noEmit` |
 
 ---
 
 ## 2. Authentication
+
+This section covers **local mode**. On a hosted deployment, users just click **Sign in with
+GitHub** instead — see [Hosting it](#8-hosting-it-sign-in-with-github).
 
 **How it talks to GitHub:** the `gh` CLI is used *only* to borrow a token (`gh auth token`). All
 API traffic is native `fetch()` to `https://api.github.com` with an `Authorization: Bearer` header —
@@ -224,21 +230,29 @@ dependash/
 ├── scripts/
 │   ├── snapshot.ts              ← local runner (read-only collector)
 │   ├── demo.ts                  ← synthetic data generator (no network)
-│   └── selftest.ts              ← metric engine assertions, no network
+│   └── selftest.ts              ← metric engine + session assertions, no network
 ├── src/
 │   ├── lib/
 │   │   ├── types.ts             ← every TypeScript interface (data model)
-│   │   ├── github.ts            ← read-only REST client (GET only)
+│   │   ├── github.ts            ← read-only REST client (GET only; Node or browser)
+│   │   ├── collect.ts           ← shared collector used by CLI *and* UI button (pure)
+│   │   ├── runner.ts            ← CLI wrapper: token + external scanner + file write (Node)
+│   │   ├── token.ts             ← local token lookup: env vars, then `gh auth token` (Node)
+│   │   ├── mode.ts              ← local vs hosted mode, loopback check
+│   │   ├── session.ts           ← hosted mode: AES-GCM sealed session cookie, OAuth config
+│   │   ├── request-token.ts     ← which token serves a given API request
 │   │   ├── dependamate.ts       ← optional external-scanner adapter
-│   │   ├── store.ts             ← the single last-fetch file: read / write / clear
+│   │   ├── store.ts             ← local mode: the single last-fetch file
+│   │   ├── browser-store.ts     ← hosted mode: the last fetch in IndexedDB
+│   │   ├── demo.ts              ← synthetic demo snapshot (CLI and "Load demo data")
 │   │   ├── scope.ts             ← personal / org / single-owner scoping
-│   │   ├── collect.ts           ← shared collector used by CLI *and* UI button
-│   │   ├── runstate.ts          ← progress state for UI-triggered runs
 │   │   ├── metrics.ts           ← lifecycles, trends, MTTR, risk, churn
-│   │   └── data.ts              ← server-side entry point for the UI
+│   │   └── data.ts              ← snapshot + scope → everything a page renders
 │   ├── app/
-│   │   ├── api/snapshot/route.ts ← POST = run collector, GET = progress (local only)
-│   │   ├── api/auth/route.ts     ← reports auth method (never returns the token)
+│   │   ├── api/gh/[...path]/route.ts ← read-only GitHub proxy (GET + allowlist)
+│   │   ├── api/auth/route.ts     ← reports mode + auth status (never returns the token)
+│   │   ├── api/auth/login|callback|logout ← GitHub OAuth web flow (hosted mode)
+│   │   ├── api/snapshot/route.ts ← read / replace the last-fetch file (local mode only)
 │   │   ├── layout.tsx           ← shell + nav + run controls
 │   │   ├── icon.svg             ← app icon / favicon (source of truth)
 │   │   ├── favicon.ico          ← 16/32/48/64 multi-size fallback
@@ -256,8 +270,9 @@ dependash/
 │       ├── TrendList.tsx        ← increasing/decreasing repo bars
 │       ├── ScopeSelector.tsx    ← personal / orgs / owner dropdown (client)
 │       ├── ScopeBar.tsx         ← selector + active-scope summary
-│       ├── RunControls.tsx      ← run button, progress log, auth badge
-│       ├── NavTabs.tsx, Ui.tsx, EmptyState.tsx
+│       ├── DataProvider.tsx     ← mode, auth and last fetch for every page (client)
+│       ├── RunControls.tsx      ← run button, progress log, auth badge, sign in/out
+│       ├── NavTabs.tsx, Ui.tsx, EmptyState.tsx, Loading.tsx
 ├── public/
 │   ├── icon-192.png             ← manifest icon
 │   └── icon-512.png             ← manifest icon (also maskable)
@@ -477,31 +492,83 @@ it up on its own; if it's gone, just fetch again.
 
 ---
 
-## 8. Hosting it (optional)
+## 8. Hosting it (sign in with GitHub)
 
-dependash is built **local-first**, but it's a standard Next.js app, so hosting it is mostly a
-matter of deciding who is allowed to reach it.
+The same codebase runs two ways, picked automatically at startup:
 
-```bash
-npm run build
-npm start          # serves on :3939
+| | **Local mode** (default) | **Hosted mode** (`GITHUB_CLIENT_ID` is set) |
+| --- | --- | --- |
+| Who uses it | You, on `localhost` | Anyone who signs in with GitHub |
+| Token | `$GITHUB_TOKEN` / `$GH_TOKEN` / `gh auth token` | Each user's own OAuth token, sealed in an HttpOnly cookie |
+| Last fetch stored | `$TMPDIR/dependash/last-fetch.json` (shared with `npm run snapshot`) | The user's own browser (IndexedDB) — never on the server |
+| Server state | One temp file | None. No database, no KV, nothing to back up |
+
+Force one or the other with `DEPENDASH_MODE=local|hosted`.
+
+### How it works
+
+The browser runs the whole fetch. Every GitHub call goes to the same-origin `/api/gh/*` proxy,
+which checks the session, attaches that user's token and forwards the `GET` to `api.github.com`.
+Each serverless invocation is one short GitHub request, so a big account never hits a function
+timeout, and the token never reaches page JavaScript.
+
+```
+Browser                         /api/gh/[...path] (serverless)        GitHub
+collect loop ── GET /api/gh/… ─► session cookie → token,          ─► api.github.com
+IndexedDB  ◄──────────────────── GET-only + endpoint allowlist    ◄──
 ```
 
-### What you must change before exposing it
+Sign-in is GitHub's standard OAuth web flow:
 
-The defaults assume "one trusted user on localhost". Three of them need attention:
+1. **Sign in with GitHub** → `/api/auth/login` sets a random `state` cookie and redirects to
+   GitHub, asking for `repo security_events read:org`.
+2. GitHub redirects back to `/api/auth/callback`. The server checks `state`, exchanges the code
+   for a token, and stores `{ token, login }` in an AES-256-GCM sealed, HttpOnly, `SameSite=Lax`
+   cookie that expires after 7 days.
+3. **Sign out** revokes the token on GitHub, clears the cookie, and deletes the stored fetch from
+   the browser.
 
-| Default | Why it matters when hosted | What to do |
-| --- | --- | --- |
-| **No login** | The dashboard has no user model or session — anyone who reaches the port sees your alerts. | Put it behind a reverse proxy with your own auth (OAuth proxy, Tailscale, Cloudflare Access, basic auth). |
-| **Loopback-only run endpoint** | `POST /api/snapshot` rejects non-loopback `Host` headers with `403`, so the Fetch button won't work through a proxy. | Set `DEPENDASH_ALLOW_REMOTE_RUN=1` — **only** once auth is actually in front of it. |
-| **Temp-dir storage** | `$TMPDIR` gets cleaned by the OS and isn't shared between containers. | Set `DEPENDASH_STATE_DIR=/var/lib/dependash` to a persistent volume. |
+### Deploy to Vercel
 
-### One token, one view
+1. **Create a GitHub OAuth App**: GitHub → Settings → Developer settings → OAuth Apps → New.
+   - Homepage URL: `https://<your-app>.vercel.app`
+   - Authorization callback URL: `https://<your-app>.vercel.app/api/auth/callback`
+2. **Import the repo** at [vercel.com/new](https://vercel.com/new). No build settings needed.
+3. **Set environment variables** in the Vercel project, then deploy:
 
-The app authenticates with a single token from the environment — it does **not** log visitors in
-individually. Whoever can open the page sees whatever that one token can see. That's ideal for a
-personal instance, and the reason to keep it private otherwise.
+   | Variable | Value |
+   | --- | --- |
+   | `GITHUB_CLIENT_ID` | From the OAuth App |
+   | `GITHUB_CLIENT_SECRET` | From the OAuth App (generate one) |
+   | `SESSION_SECRET` | 32+ random characters, e.g. `openssl rand -base64 32` |
+
+Do **not** set `GITHUB_TOKEN` on a hosted deployment. Hosted mode ignores it anyway, but there's no
+reason for it to exist there.
+
+Any Node host that runs Next.js works the same way (Netlify, Cloudflare via OpenNext, a VPS with
+`npm run build && npm start`). If the deployment sits behind a proxy that rewrites the host, set
+`DEPENDASH_URL=https://your.domain` so the OAuth callback URL is built correctly.
+
+> **Preview deployments:** GitHub only redirects to the callback URL registered on the OAuth App,
+> so sign-in works on your production domain, not on per-branch preview URLs. Use a second OAuth
+> App if you need it on previews.
+
+### Things users should know
+
+- **Organization approval.** GitHub OAuth Apps need an org's approval when that org restricts
+  third-party apps. Until an admin approves (users can request it on the consent screen), that
+  org's private repos won't appear.
+- **`repo` is a broad scope.** GitHub has no read-only variant for OAuth Apps. The read-only
+  guarantee is enforced by this code (GET-only proxy with an endpoint allowlist), so users are
+  trusting whoever operates the deployment. Cautious users or companies can deploy their own copy
+  in a few minutes.
+- **Alert data stays in the browser.** Clearing site data, or signing in on another device,
+  means fetching again.
+
+### Self-hosting a single-user instance behind your own auth
+
+Local mode also works on a server if you put your own auth in front of it (OAuth proxy,
+Tailscale, Cloudflare Access). Whoever reaches the page sees what that one token can see:
 
 ```bash
 DEPENDASH_TOKEN=ghp_xxx \
@@ -510,13 +577,8 @@ DEPENDASH_ALLOW_REMOTE_RUN=1 \
 npm start
 ```
 
-For a per-user experience you'd add a GitHub OAuth flow and key the stored fetch by user — a real
-feature, not a config change, and the natural next step if you want to fork this into a team tool.
-
-### Refreshing on a server
-
-There's no built-in scheduler (by design). Click **⟳ Fetch now**, or if you want it hands-off on a
-box you control, point *your own* cron at it — the project still ships no workflows or automation:
+There's no built-in scheduler (by design). If you want it hands-off on a box you control, point
+*your own* cron at the CLI:
 
 ```cron
 0 * * * * cd /srv/dependash && npm run snapshot --silent
@@ -524,20 +586,28 @@ box you control, point *your own* cron at it — the project still ships no work
 
 ### Environment variables
 
-| Variable | Purpose |
-| --- | --- |
-| `DEPENDASH_TOKEN` | Token to authenticate with (also accepts `GITHUB_TOKEN` / `GH_TOKEN`) |
-| `DEPENDASH_STATE_DIR` | Where the single last-fetch file is stored (default: `$TMPDIR/dependash`) |
-| `DEPENDASH_ALLOW_REMOTE_RUN` | Set to `1` to allow non-loopback requests to trigger a fetch |
+| Variable | Mode | Purpose |
+| --- | --- | --- |
+| `GITHUB_CLIENT_ID` | hosted | OAuth App client ID. Setting it switches to hosted mode |
+| `GITHUB_CLIENT_SECRET` | hosted | OAuth App client secret |
+| `SESSION_SECRET` | hosted | 32+ random characters used to encrypt session cookies |
+| `DEPENDASH_URL` | hosted | Public origin, if it can't be taken from the request |
+| `DEPENDASH_MODE` | both | Force `local` or `hosted` |
+| `DEPENDASH_TOKEN` | local | Token to authenticate with (also accepts `GITHUB_TOKEN` / `GH_TOKEN`) |
+| `DEPENDASH_STATE_DIR` | local | Where the single last-fetch file is stored (default: `$TMPDIR/dependash`) |
+| `DEPENDASH_ALLOW_REMOTE_RUN` | local | Set to `1` to allow non-loopback requests |
+
+See [`.env.example`](.env.example).
 
 ---
 
 ## 9. Guarantees
 
-- `src/lib/github.ts` issues `method: 'GET'` exclusively — there is no code path that can POST, PATCH, PUT or DELETE.
-- The only file writes are the single last-fetch JSON in `$TMPDIR` (or `DEPENDASH_STATE_DIR`) and the standard `.next/` build output. Nothing is written into your repositories.
+- `src/lib/github.ts` issues `method: 'GET'` exclusively, and the `/api/gh` proxy only exports a `GET` handler for an allowlist of read endpoints. There is no code path that can POST, PATCH, PUT or DELETE against a repository.
+- The only non-GET calls are the hosted-mode OAuth plumbing: exchanging the sign-in code for a token (`POST github.com/login/oauth/access_token`) and revoking it on sign-out (`DELETE /applications/:client_id/token`). Neither touches a repository.
+- The only file writes are the single last-fetch JSON in `$TMPDIR` (or `DEPENDASH_STATE_DIR`) in local mode and the standard `.next/` build output. Hosted mode stores nothing on the server. Nothing is written into your repositories.
 - No GitHub Actions, workflows, commits, PRs, branches, releases, labels, or settings changes.
-- No external database, telemetry, or third-party service. Only `api.github.com` is contacted.
+- No external database, telemetry, or third-party service. Only GitHub is contacted.
 
 ---
 

@@ -16,6 +16,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { Snapshot } from './types';
 
+export { localDateString } from './types';
+
 /** Directory holding the single last-fetch file. */
 export function stateDir(): string {
   return process.env.DEPENDASH_STATE_DIR ?? path.join(os.tmpdir(), 'dependash');
@@ -24,11 +26,6 @@ export function stateDir(): string {
 /** Absolute path of the one and only data file. */
 export function snapshotFile(): string {
   return path.join(stateDir(), 'last-fetch.json');
-}
-
-export function localDateString(d = new Date()): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 /** Read the last fetch, or null if nothing has been collected yet. */

@@ -2,47 +2,34 @@
  * Shared collection logic.
  *
  * Both entry points use this single implementation:
- *   - the CLI runner  (scripts/snapshot.ts)
- *   - the UI button   (src/app/api/snapshot/route.ts)
+ *   - the CLI runner  (scripts/snapshot.ts, via runner.ts)
+ *   - the UI button   (RunControls, in the browser, through the /api/gh proxy)
  *
- * Still read-only toward GitHub: it delegates to GitHubClient, which issues
- * GET requests exclusively.
+ * Pure: no fs, no child processes, so it bundles for the browser. Still
+ * read-only toward GitHub: it delegates to GitHubClient, which issues GET
+ * requests exclusively.
  */
 
-import { GitHubClient, CollectOptions, resolveToken } from './github';
-import { runExternalScanner } from './dependamate';
-import { localDateString, writeSnapshot } from './store';
-import { AlertRecord, RepoRecord, Snapshot, emptySeverityCounts } from './types';
+import { GitHubClient, CollectOptions } from './github';
+import { AlertRecord, RepoRecord, Snapshot, emptySeverityCounts, localDateString } from './types';
 
 export const TOOL_VERSION = 'dependash@1.0.0';
 
-export interface RunOptions extends CollectOptions {
-  /** Override the snapshot date / filename. */
+export interface CollectSnapshotOptions extends CollectOptions {
+  /** Override the snapshot date. */
   date?: string;
-  /** Max 100-alert pages per repo. */
-  maxAlertPages?: number;
-  /** Shell command for an external scanner (e.g. DependaMate). */
-  dependamate?: string;
-  /** Explicit token; otherwise env vars then `gh auth token`. */
-  token?: string;
+  /** Alerts from an external scanner (e.g. DependaMate) instead of the API. */
+  externalAlerts?: AlertRecord[];
   log?: (msg: string) => void;
 }
 
-export interface RunResult {
-  snapshot: Snapshot;
-  file: string;
-  openAlerts: number;
-}
-
-export async function runSnapshot(opts: RunOptions = {}): Promise<RunResult> {
+/** Walk every visible repo and build a snapshot. Writes nothing. */
+export async function collectSnapshot(
+  client: GitHubClient,
+  opts: CollectSnapshotOptions = {},
+): Promise<Snapshot> {
   const startedAt = Date.now();
   const log = opts.log ?? (() => {});
-  const token = resolveToken(opts.token);
-  const client = new GitHubClient({
-    token,
-    log,
-    maxAlertPages: opts.maxAlertPages ?? 20,
-  });
 
   const viewer = await client.viewer();
   const rl = await client.rateLimit();
@@ -52,11 +39,8 @@ export async function runSnapshot(opts: RunOptions = {}): Promise<RunResult> {
   let alerts: AlertRecord[];
   let source: Snapshot['meta']['source'] = 'github-api';
 
-  if (opts.dependamate) {
-    log(`running external scanner: ${opts.dependamate}`);
-    const external = runExternalScanner(opts.dependamate);
-    log(`external scanner returned ${external.length} alerts`);
-
+  if (opts.externalAlerts) {
+    const external = opts.externalAlerts;
     const rawRepos = await client.listRepos(opts);
     repos = [];
     for (const raw of rawRepos) {
@@ -109,7 +93,7 @@ export async function runSnapshot(opts: RunOptions = {}): Promise<RunResult> {
     alerts = collected.alerts;
   }
 
-  const snapshot: Snapshot = {
+  return {
     schemaVersion: 1,
     meta: {
       date: opts.date ?? localDateString(),
@@ -125,12 +109,5 @@ export async function runSnapshot(opts: RunOptions = {}): Promise<RunResult> {
     },
     repos,
     alerts,
-  };
-
-  const file = writeSnapshot(snapshot);
-  return {
-    snapshot,
-    file,
-    openAlerts: alerts.filter((a) => a.state === 'open').length,
   };
 }

@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: 'dependash',
     short_name: 'dependash',
-    description: 'Local-only Dependabot dashboard',
+    description: 'One dashboard for every Dependabot alert you can see',
     start_url: '/',
     display: 'standalone',
     background_color: '#0b0f16',
