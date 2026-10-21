@@ -20,6 +20,7 @@ import { applyScope, buildOwnerOptions, normalizeScope } from '../src/lib/scope'
 import { AlertRecord, RepoRecord, Snapshot, emptySeverityCounts } from '../src/lib/types';
 import { buildDemoSnapshot } from '../src/lib/demo';
 import { sealSession, unsealSession } from '../src/lib/session';
+import { agentFixPrompt, alertsMarkdown, groupByRepo, repoNames } from '../src/lib/alert-export';
 
 function iso(date: string): string {
   return `${date}T12:00:00Z`;
@@ -383,6 +384,32 @@ check('a tampered, expired or foreign session is rejected', () => {
   assert.equal(unsealSession(undefined), null);
   process.env.SESSION_SECRET = 'a-different-secret-a-different-secret';
   assert.equal(unsealSession(sealed), null);
+});
+
+// ── Alert exports (copy buttons) ────────────────────────────────────────────
+const exportAlerts = [
+  alert('acme/low-only', 1, { severity: 'low', packageName: 'left-pad' }),
+  alert('acme/web', 2, { severity: 'medium', packageName: 'lodash' }),
+  alert('acme/web', 3, { severity: 'critical', packageName: 'requests', firstPatchedVersion: '2.32.0' }),
+  alert('acme/api', 4, { severity: 'high', packageName: 'tokio', firstPatchedVersion: null }),
+];
+check('exports put the repo with the most severe alert first', () => {
+  assert.deepEqual(groupByRepo(exportAlerts).map(([repo]) => repo), ['acme/web', 'acme/api', 'acme/low-only']);
+  assert.equal(repoNames(exportAlerts), 'acme/web\nacme/api\nacme/low-only');
+});
+check('within a repo, alerts are listed most severe first', () => {
+  const md = alertsMarkdown(exportAlerts);
+  assert.ok(md.indexOf('`requests`') < md.indexOf('`lodash`'));
+  assert.match(md, /patched in 2\.32\.0/);
+  assert.match(md, /no patched version yet/);
+});
+check('the agent prompt carries instructions and every alert', () => {
+  const prompt = agentFixPrompt(exportAlerts, new Date('2026-10-21T00:00:00Z'));
+  assert.match(prompt, /fix\/dependabot-alerts-2026-10-21/);
+  assert.match(prompt, /gh pr create/);
+  assert.match(prompt, /direct, top-level dependencies/);
+  assert.match(prompt, /4 in 3 repositories/);
+  for (const a of exportAlerts) assert.ok(prompt.includes(a.htmlUrl), a.key);
 });
 
 console.log(`\n${passed} checks passed\n`);

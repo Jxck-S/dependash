@@ -998,3 +998,21 @@ button.pg:disabled {
     width: auto;
   }
 }
+
+/* ── Alert table copy buttons ────────────────────────────────────────────── */
+
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.copy-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
