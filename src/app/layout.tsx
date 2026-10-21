@@ -1,11 +1,7 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
-import { Suspense } from 'react';
 import './globals.css';
-import NavTabs from '@/components/NavTabs';
-import RunControls from '@/components/RunControls';
+import AppShell from '@/components/AppShell';
 import DataProvider from '@/components/DataProvider';
-import Loading from '@/components/Loading';
 
 export const metadata: Metadata = {
   title: 'dependash',
@@ -16,22 +12,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
-        <div className="shell">
-          <header className="topbar">
-            <h1>
-              <Link href="/" style={{ color: 'var(--text)' }}>
-                dependash
-              </Link>
-            </h1>
-            <Suspense fallback={<nav className="tabs" />}>
-              <NavTabs />
-            </Suspense>
-          </header>
-          <DataProvider>
-            <RunControls />
-            <Suspense fallback={<Loading />}>{children}</Suspense>
-          </DataProvider>
-        </div>
+        <DataProvider>
+          <AppShell>{children}</AppShell>
+        </DataProvider>
       </body>
     </html>
   );

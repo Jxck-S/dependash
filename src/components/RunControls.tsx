@@ -23,7 +23,7 @@ interface RunResult {
   warnings: number;
 }
 
-const AUTH_ERRORS: Record<string, string> = {
+export const AUTH_ERRORS: Record<string, string> = {
   access_denied: 'GitHub sign-in was cancelled.',
   invalid_state: 'Sign-in expired or was tampered with — please try again.',
   token_exchange_failed: 'GitHub didn’t accept the sign-in code — please try again.',
