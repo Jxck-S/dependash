@@ -15,7 +15,6 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { useSearchParams } from 'next/navigation';
 import { clearBrowserSnapshot, loadBrowserSnapshot, saveBrowserSnapshot } from '@/lib/browser-store';
 import { getDashboardData, resolveScope } from '@/lib/data';
-import { DEMO_TOOL_VERSION } from '@/lib/demo';
 import { DashboardData, Snapshot } from '@/lib/types';
 
 export type AppMode = 'local' | 'hosted';
@@ -59,15 +58,16 @@ async function loadSnapshot(auth: AuthInfo | null): Promise<Snapshot | null> {
     return body?.snapshot ?? null;
   }
   const stored = await loadBrowserSnapshot();
-  // Don't show one GitHub account's data to another account on a shared browser.
-  if (
-    stored &&
-    stored.meta.toolVersion !== DEMO_TOOL_VERSION &&
-    stored.meta.viewer !== auth?.viewer
-  ) {
-    return null;
-  }
-  return stored;
+  // Only show what was saved under the current sign-in state: one GitHub
+  // account's data never reaches another on a shared browser, and demo data
+  // loaded while signed out doesn't linger after signing in.
+  if (!stored || stored.account !== currentAccount(auth)) return null;
+  return stored.snapshot;
+}
+
+/** The signed-in GitHub login in hosted mode, or null when signed out. */
+function currentAccount(auth: AuthInfo | null): string | null {
+  return auth?.authenticated ? auth.viewer ?? null : null;
 }
 
 export default function DataProvider({ children }: { children: React.ReactNode }) {
@@ -102,10 +102,10 @@ export default function DataProvider({ children }: { children: React.ReactNode }
           throw new Error(`couldn’t save the fetch: ${body.error}`);
         }
       } else {
-        await saveBrowserSnapshot(next);
+        await saveBrowserSnapshot(next, currentAccount(auth));
       }
     },
-    [auth?.mode],
+    [auth],
   );
 
   const signOut = useCallback(async () => {

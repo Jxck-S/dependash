@@ -32,18 +32,35 @@ async function run<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRe
   }
 }
 
-export async function loadBrowserSnapshot(): Promise<Snapshot | null> {
+/** A stored fetch plus the account that was signed in when it was saved (null: signed out). */
+export interface StoredSnapshot {
+  snapshot: Snapshot;
+  account: string | null;
+}
+
+function isSnapshot(value: unknown): value is Snapshot {
+  const v = value as Snapshot | undefined;
+  return !!v && Array.isArray(v.repos) && Array.isArray(v.alerts);
+}
+
+export async function loadBrowserSnapshot(): Promise<StoredSnapshot | null> {
   try {
-    const value = await run<Snapshot | undefined>('readonly', (s) => s.get(KEY));
-    return value && Array.isArray(value.repos) && Array.isArray(value.alerts) ? value : null;
+    const value = await run<unknown>('readonly', (s) => s.get(KEY));
+    const stored = value as Partial<StoredSnapshot> | undefined;
+    if (stored && isSnapshot(stored.snapshot)) {
+      return { snapshot: stored.snapshot, account: stored.account ?? null };
+    }
+    // Older entries were the bare snapshot; its viewer is the best guess at the account.
+    return isSnapshot(value) ? { snapshot: value, account: value.meta.viewer } : null;
   } catch {
     return null;
   }
 }
 
-export async function saveBrowserSnapshot(snapshot: Snapshot): Promise<void> {
+export async function saveBrowserSnapshot(snapshot: Snapshot, account: string | null): Promise<void> {
   try {
-    await run('readwrite', (s) => s.put(snapshot, KEY));
+    const stored: StoredSnapshot = { snapshot, account };
+    await run('readwrite', (s) => s.put(stored, KEY));
   } catch {
     /* storage unavailable — the dashboard still shows this fetch until reload */
   }
