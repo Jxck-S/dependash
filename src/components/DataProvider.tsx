@@ -37,6 +37,8 @@ interface DataState {
   ready: boolean;
   saveSnapshot: (snapshot: Snapshot) => Promise<void>;
   signOut: () => Promise<void>;
+  /** Drop the stored fetch (the signed-out demo) and go back to the splash. */
+  exitDemo: () => Promise<void>;
   refreshAuth: () => Promise<void>;
 }
 
@@ -115,9 +117,14 @@ export default function DataProvider({ children }: { children: React.ReactNode }
     setAuth(await fetchAuth());
   }, []);
 
+  const exitDemo = useCallback(async () => {
+    await clearBrowserSnapshot();
+    setSnapshot(null);
+  }, []);
+
   const value = useMemo(
-    () => ({ auth, snapshot, ready, saveSnapshot, signOut, refreshAuth }),
-    [auth, snapshot, ready, saveSnapshot, signOut, refreshAuth],
+    () => ({ auth, snapshot, ready, saveSnapshot, signOut, exitDemo, refreshAuth }),
+    [auth, snapshot, ready, saveSnapshot, signOut, exitDemo, refreshAuth],
   );
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }
