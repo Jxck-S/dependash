@@ -1,0 +1,1 @@
+dependash — every Dependabot alert from your personal, org and collaborator repos in one dashboard
