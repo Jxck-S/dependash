@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { agentFixPrompt, alertsMarkdown, repoNames } from '@/lib/alert-export';
 import { AlertRecord, LifecycleRecord, SEVERITIES, Severity } from '@/lib/types';
 import { SeverityBadge } from './Ui';
 
@@ -60,7 +61,10 @@ export default function AlertTable({
 
   return (
     <div className="panel">
-      <h2>{title}</h2>
+      <div className="panel-head">
+        <h2>{title}</h2>
+        <CopyButtons alerts={rows} />
+      </div>
       <p className="sub">
         Package links go to the alert in GitHub; the GHSA id opens the advisory in the GitHub Advisory
         Database.
@@ -186,4 +190,67 @@ export default function AlertTable({
       )}
     </div>
   );
+}
+
+const COPY_KINDS = [
+  { id: 'alerts', label: 'Alerts', title: 'Markdown list of these alerts, grouped by repo', build: alertsMarkdown },
+  { id: 'repos', label: 'Repos', title: 'Just the repo names, one per line', build: repoNames },
+  {
+    id: 'prompt',
+    label: 'AI fix prompt',
+    title: 'These alerts plus instructions for an AI coding agent to fix them, test, and open a PR per repo',
+    build: (alerts: AlertRecord[]) => agentFixPrompt(alerts),
+  },
+] as const;
+
+/** Copies whatever the table currently matches (every page, after filters) in one of three forms. */
+function CopyButtons({ alerts }: { alerts: AlertRecord[] }) {
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const copy = async (id: string, text: string) => {
+    setCopied((await writeClipboard(text)) ? id : 'failed');
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  return (
+    <div className="copy-bar">
+      <span className="muted">
+        {copied === 'failed' ? 'Couldn’t copy' : `Copy ${alerts.length} alert${alerts.length === 1 ? '' : 's'}:`}
+      </span>
+      {COPY_KINDS.map((k) => (
+        <button
+          key={k.id}
+          className={`pg${k.id === 'prompt' ? ' run-btn' : ''}`}
+          title={k.title}
+          disabled={alerts.length === 0}
+          onClick={() => void copy(k.id, k.build(alerts))}
+        >
+          {copied === k.id ? '✓ Copied' : k.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Clipboard API first; fall back to a hidden textarea where it's blocked (insecure origin, webviews). */
+async function writeClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    try {
+      return document.execCommand('copy');
+    } catch {
+      return false;
+    } finally {
+      area.remove();
+    }
+  }
 }
