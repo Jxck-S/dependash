@@ -49,6 +49,20 @@ export interface CollectOptions {
   /** Only scan these "owner/name" repos. */
   only?: string[];
   concurrency?: number;
+  /** Structured progress for UIs (the progress bar); `log` stays the text feed. */
+  onProgress?: (p: CollectProgress) => void;
+}
+
+export interface CollectProgress {
+  phase: 'auth' | 'listing' | 'scanning' | 'saving';
+  /** Repos scanned so far (scanning phase). */
+  done: number;
+  /** Repos to scan; 0 until the repo list is known. */
+  total: number;
+  /** Alerts (all states) collected so far. */
+  alerts: number;
+  /** Repo that just finished scanning. */
+  current?: string;
 }
 
 export class GitHubError extends Error {
@@ -307,8 +321,10 @@ export class GitHubClient {
   async collect(
     opts: CollectOptions,
   ): Promise<{ repos: RepoRecord[]; alerts: AlertRecord[] }> {
+    opts.onProgress?.({ phase: 'listing', done: 0, total: 0, alerts: 0 });
     const raw = await this.listRepos(opts);
     this.log(`found ${raw.length} repositories`);
+    opts.onProgress?.({ phase: 'scanning', done: 0, total: raw.length, alerts: 0 });
 
     const repos: RepoRecord[] = [];
     const alerts: AlertRecord[] = [];
@@ -365,6 +381,13 @@ export class GitHubClient {
       }
       repos.push(record);
       done += 1;
+      opts.onProgress?.({
+        phase: 'scanning',
+        done,
+        total: raw.length,
+        alerts: alerts.length,
+        current: repo.full_name,
+      });
       if (done % 10 === 0 || done === raw.length) {
         this.log(`  scanned ${done}/${raw.length}`);
       }

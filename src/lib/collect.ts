@@ -30,6 +30,7 @@ export async function collectSnapshot(
 ): Promise<Snapshot> {
   const startedAt = Date.now();
   const log = opts.log ?? (() => {});
+  opts.onProgress?.({ phase: 'auth', done: 0, total: 0, alerts: 0 });
 
   const viewer = await client.viewer();
   const rl = await client.rateLimit();
@@ -41,9 +42,17 @@ export async function collectSnapshot(
 
   if (opts.externalAlerts) {
     const external = opts.externalAlerts;
+    opts.onProgress?.({ phase: 'listing', done: 0, total: 0, alerts: 0 });
     const rawRepos = await client.listRepos(opts);
     repos = [];
     for (const raw of rawRepos) {
+      opts.onProgress?.({
+        phase: 'scanning',
+        done: repos.length,
+        total: rawRepos.length,
+        alerts: 0,
+        current: raw.full_name,
+      });
       const probe = await client.checkEnablement(raw).catch(() => ({
         enabled: null as boolean | null,
         source: 'unknown' as const,
