@@ -79,7 +79,7 @@ export default function AlertTable({
               setQuery(e.target.value);
               setPage(0);
             }}
-            style={{ minWidth: 280 }}
+            className="search-wide"
           />
           <select
             value={severity}
@@ -113,7 +113,8 @@ export default function AlertTable({
         </div>
       )}
 
-      <div style={{ overflowX: 'auto' }}>
+      {/* Table on wide screens, cards on phones (toggled in CSS). */}
+      <div className="table-wrap">
         <table>
           <thead>
             <tr>
@@ -174,6 +175,12 @@ export default function AlertTable({
           </tbody>
         </table>
       </div>
+      <div className="card-list">
+        {visible.map((a) => (
+          <AlertCard key={a.key} alert={a} age={ageByKey.get(a.key)} />
+        ))}
+        {visible.length === 0 && <div className="empty">No alerts match this filter.</div>}
+      </div>
 
       {!limit && (
         <div className="pager">
@@ -188,6 +195,45 @@ export default function AlertTable({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+function AlertCard({ alert: a, age }: { alert: AlertRecord; age: number | undefined }) {
+  return (
+    <div className={`m-card sev-${a.severity}`}>
+      <div className="m-card-top">
+        <SeverityBadge severity={a.severity} />
+        {a.cvssScore != null && <span className="muted">CVSS {a.cvssScore}</span>}
+        {age !== undefined && <span className="muted">{age}d old</span>}
+      </div>
+      <a href={a.htmlUrl} target="_blank" rel="noreferrer" className="mono m-card-title">
+        {a.packageName}
+      </a>
+      <div className="muted mono m-card-sub">
+        {a.ecosystem}
+        {a.manifestPath ? ` · ${a.manifestPath}` : ''}
+        {a.scope === 'development' ? ' · dev' : ''}
+      </div>
+      <p className="m-card-body">{a.summary}</p>
+      <div className="m-card-meta">
+        <a href={`https://github.com/${a.repo}/security/dependabot`} target="_blank" rel="noreferrer">
+          {a.repo}
+        </a>
+        {a.ghsaId && (
+          <a href={a.advisoryUrl ?? '#'} target="_blank" rel="noreferrer" className="mono">
+            {a.ghsaId}
+          </a>
+        )}
+        {a.cveId && <span className="muted mono">{a.cveId}</span>}
+        <span className="mono">
+          {a.firstPatchedVersion ? (
+            <>fix: {a.firstPatchedVersion}</>
+          ) : (
+            <span className="muted">no fix yet</span>
+          )}
+        </span>
+      </div>
     </div>
   );
 }

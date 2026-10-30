@@ -7,12 +7,13 @@
  * The fetch runs right here in the browser: the shared collector walks every
  * repo through the same-origin /api/gh proxy (which attaches the token
  * server-side), then the result is saved and every page recomputes in place.
+ * While it runs, a progress bar shows the phase, percent and an ETA.
  * In hosted mode, signed-out visitors get a "Sign in with GitHub" button.
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { collectSnapshot } from '@/lib/collect';
-import { GitHubClient } from '@/lib/github';
+import { CollectProgress, GitHubClient } from '@/lib/github';
 import { useData } from './DataProvider';
 
 interface RunResult {
@@ -63,7 +64,9 @@ export default function RunControls() {
   const [logs, setLogs] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RunResult | null>(null);
-  const [showLog, setShowLog] = useState(false);
+  const [showPanel, setShowPanel] = useState(false);
+  const [progress, setProgress] = useState<CollectProgress | null>(null);
+  const [startedAt, setStartedAt] = useState(0);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [includeForks, setIncludeForks] = useState(false);
   const [excluded, setExcluded] = useState<string[]>([]);
@@ -81,7 +84,7 @@ export default function RunControls() {
     const code = url.searchParams.get('auth_error');
     if (!code) return;
     setError(AUTH_ERRORS[code] ?? `Sign-in failed (${code}).`);
-    setShowLog(true);
+    setShowPanel(true);
     url.searchParams.delete('auth_error');
     window.history.replaceState(null, '', url.toString());
   }, []);
@@ -162,7 +165,9 @@ export default function RunControls() {
 
   const run = async () => {
     setRunning(true);
-    setShowLog(true);
+    setShowPanel(true);
+    setStartedAt(Date.now());
+    setProgress(null);
     setLogs([]);
     setError(null);
     setResult(null);
@@ -174,7 +179,14 @@ export default function RunControls() {
         includeForks,
         excludeOwners: excluded,
         log,
+        onProgress: setProgress,
       });
+      setProgress((p) => ({
+        phase: 'saving',
+        done: p?.total ?? 0,
+        total: p?.total ?? 0,
+        alerts: next.alerts.length,
+      }));
       await saveSnapshot(next);
       setResult({
         reposScanned: next.meta.reposScanned,
@@ -198,70 +210,72 @@ export default function RunControls() {
 
   return (
     <div className="run-bar">
-      {hosted && !auth?.authenticated ? (
-        <a className="pg run-btn" href="/api/auth/login">
-          Sign in with GitHub
-        </a>
-      ) : (
-        <button className="pg run-btn" onClick={run} disabled={running || !canFetch}>
-          {running ? <span className="spinner" /> : '⟳'} {running ? 'Fetching…' : 'Fetch now'}
-        </button>
-      )}
-
-      <label className="opt" title="Archived repos are excluded by default">
-        <input
-          type="checkbox"
-          checked={includeArchived}
-          disabled={running}
-          onChange={(e) => setIncludeArchived(e.target.checked)}
-        />
-        archived
-      </label>
-      <label className="opt" title="Forks are excluded by default">
-        <input
-          type="checkbox"
-          checked={includeForks}
-          disabled={running}
-          onChange={(e) => setIncludeForks(e.target.checked)}
-        />
-        forks
-      </label>
-      <div className="skip-picker" ref={skipRef}>
-        <button className="pg" disabled={running} onClick={() => setShowSkip((v) => !v)}>
-          skip orgs{excluded.length ? ` (${excluded.length})` : ''} ▾
-        </button>
-        {showSkip && (
-          <div className="skip-menu">
-            {owners === null && <div className="muted">loading…</div>}
-            {ownersError && <div className="muted" title={ownersError}>couldn’t load orgs from GitHub</div>}
-            {pickerOwners(owners ?? [], excluded).map((o) => (
-              <label key={o.login} className="opt">
-                <input
-                  type="checkbox"
-                  checked={excluded.some((e) => e.toLowerCase() === o.login.toLowerCase())}
-                  onChange={() => toggleExcluded(o.login)}
-                />
-                {o.login}
-                <span className="muted">
-                  {o.type === 'User' ? ' · user' : ''}
-                  {o.repos != null ? ` · ${o.repos} repos` : ''}
-                </span>
-              </label>
-            ))}
-            {owners?.length === 0 && excluded.length === 0 && !ownersError && (
-              <div className="muted">no orgs found</div>
-            )}
-          </div>
+      <div className="run-actions">
+        {hosted && !auth?.authenticated ? (
+          <a className="pg run-btn" href="/api/auth/login">
+            Sign in with GitHub
+          </a>
+        ) : (
+          <button className="pg run-btn" onClick={run} disabled={running || !canFetch}>
+            {running ? <span className="spinner" /> : '⟳'} {running ? 'Fetching…' : 'Fetch now'}
+          </button>
         )}
+  
+        <label className="opt" title="Archived repos are excluded by default">
+          <input
+            type="checkbox"
+            checked={includeArchived}
+            disabled={running}
+            onChange={(e) => setIncludeArchived(e.target.checked)}
+          />
+          archived
+        </label>
+        <label className="opt" title="Forks are excluded by default">
+          <input
+            type="checkbox"
+            checked={includeForks}
+            disabled={running}
+            onChange={(e) => setIncludeForks(e.target.checked)}
+          />
+          forks
+        </label>
+        <div className="skip-picker" ref={skipRef}>
+          <button className="pg" disabled={running} onClick={() => setShowSkip((v) => !v)}>
+            skip orgs{excluded.length ? ` (${excluded.length})` : ''} ▾
+          </button>
+          {showSkip && (
+            <div className="skip-menu">
+              {owners === null && <div className="muted">loading…</div>}
+              {ownersError && <div className="muted" title={ownersError}>couldn’t load orgs from GitHub</div>}
+              {pickerOwners(owners ?? [], excluded).map((o) => (
+                <label key={o.login} className="opt">
+                  <input
+                    type="checkbox"
+                    checked={excluded.some((e) => e.toLowerCase() === o.login.toLowerCase())}
+                    onChange={() => toggleExcluded(o.login)}
+                  />
+                  {o.login}
+                  <span className="muted">
+                    {o.type === 'User' ? ' · user' : ''}
+                    {o.repos != null ? ` · ${o.repos} repos` : ''}
+                  </span>
+                </label>
+              ))}
+              {owners?.length === 0 && excluded.length === 0 && !ownersError && (
+                <div className="muted">no orgs found</div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {latest ? (
-        <span className="muted">
+        <span className="muted run-status">
           Last fetched <strong>{relativeTime(latest.takenAt)}</strong> · {latest.reposScanned} repos ·{' '}
           {latestOpen} open
         </span>
       ) : (
-        <span className="muted">
+        <span className="muted run-status">
           {hosted && !auth?.authenticated ? 'Sign in to fetch your alerts.' : 'No data yet — click “Fetch now”.'}
         </span>
       )}
@@ -271,7 +285,7 @@ export default function RunControls() {
         {auth?.authenticated && (
           <>
             <span className="badge on">{auth.viewer}</span>
-            <span className="muted" title="read-only GET requests via the /api/gh proxy">
+            <span className="muted run-via" title="read-only GET requests via the /api/gh proxy">
               via {auth.source === 'gh-cli' ? 'gh CLI token' : auth.detail}
               {auth.rateLimit ? ` · ${auth.rateLimit.remaining}/${auth.rateLimit.limit} API calls left` : ''}
             </span>
@@ -289,29 +303,185 @@ export default function RunControls() {
         )}
       </span>
 
-      {(logs.length > 0 || error) && (
-        <button className="pg" onClick={() => setShowLog((v) => !v)}>
-          {showLog ? 'Hide log' : 'Show log'}
-        </button>
+      {showPanel && (
+        <FetchProgress
+          running={running}
+          progress={progress}
+          startedAt={startedAt}
+          error={error}
+          hint={auth && !auth.authenticated && !hosted ? (auth.hint ?? auth.error ?? null) : null}
+          result={result}
+          logs={logs}
+          onClose={() => setShowPanel(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+const PHASE_LABEL: Record<CollectProgress['phase'], string> = {
+  auth: 'Checking GitHub access…',
+  listing: 'Listing repositories…',
+  scanning: 'Scanning repositories for alerts…',
+  saving: 'Saving…',
+};
+
+/** Rough overall percent: the repo scan dominates, the other phases get slivers. */
+function percentOf(p: CollectProgress | null): number {
+  if (!p) return 1;
+  switch (p.phase) {
+    case 'auth':
+      return 2;
+    case 'listing':
+      return 5;
+    case 'scanning':
+      return 8 + (p.total ? (p.done / p.total) * 88 : 0);
+    case 'saving':
+      return 97;
+  }
+}
+
+function clock(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** Progress bar for a running fetch; turns into a summary (or error) when it ends. */
+function FetchProgress({
+  running,
+  progress,
+  startedAt,
+  error,
+  hint,
+  result,
+  logs,
+  onClose,
+}: {
+  running: boolean;
+  progress: CollectProgress | null;
+  startedAt: number;
+  error: string | null;
+  hint: string | null;
+  result: RunResult | null;
+  logs: string[];
+  onClose: () => void;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  const scanStart = useRef<{ at: number; done: number } | null>(null);
+
+  // Tick once a second so elapsed / ETA move between progress events.
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [running]);
+
+  // ETA is measured from the start of the repo scan, not the whole run.
+  useEffect(() => {
+    if (!running) scanStart.current = null;
+    else if (progress?.phase === 'scanning' && !scanStart.current) {
+      scanStart.current = { at: Date.now(), done: progress.done };
+    }
+  }, [running, progress]);
+
+  const pct = result && !running ? 100 : Math.min(99, Math.round(percentOf(progress)));
+  const state = error ? 'error' : running ? 'running' : result ? 'done' : 'idle';
+  const elapsed = (running ? now : Date.now()) - startedAt;
+
+  let eta: string | null = null;
+  const s = scanStart.current;
+  if (running && progress?.phase === 'scanning' && s && progress.done - s.done >= 3) {
+    const rate = (progress.done - s.done) / Math.max(1, now - s.at);
+    eta = clock((progress.total - progress.done) / rate);
+  }
+  // Under the bar: a rate-limit wait if one is happening, else the repo just scanned.
+  const lastLine = logs[logs.length - 1];
+  const detail = /rate limited/.test(lastLine ?? '')
+    ? lastLine
+    : progress?.phase === 'scanning'
+      ? progress.current
+      : null;
+
+  return (
+    <div className={`fetch-progress ${state}`} role="status" aria-live="polite">
+      <div className="fp-head">
+        <span className="fp-title">
+          {state === 'error'
+            ? 'Fetch failed'
+            : state === 'done'
+              ? 'Fetch complete'
+              : state === 'running'
+                ? progress
+                  ? PHASE_LABEL[progress.phase]
+                  : 'Starting…'
+                : 'Not connected'}
+        </span>
+        {state !== 'idle' && <span className="fp-pct">{state === 'error' ? '—' : `${pct}%`}</span>}
+        {!running && (
+          <button className="fp-close" onClick={onClose} aria-label="Dismiss">
+            ×
+          </button>
+        )}
+      </div>
+
+      {state !== 'idle' && (
+        <div
+          className="fp-track"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={pct}
+        >
+          <div className="fp-fill" style={{ width: `${state === 'error' ? 100 : pct}%` }} />
+        </div>
       )}
 
-      {showLog && (
-        <div className="run-log">
-          {error && <div style={{ color: 'var(--critical)' }}>✗ {error}</div>}
-          {auth && !auth.authenticated && !hosted && (
-            <div style={{ color: 'var(--medium)' }}>{auth.hint ?? auth.error}</div>
+      {state === 'running' && (
+        <div className="fp-stats">
+          {progress?.total ? (
+            <span>
+              <strong>{progress.done}</strong> / {progress.total} repos
+            </span>
+          ) : null}
+          {progress?.phase === 'scanning' && (
+            <span>
+              <strong>{progress.alerts}</strong> alerts found
+            </span>
           )}
-          {logs.map((line, i) => (
-            <div key={i}>{line}</div>
-          ))}
-          {result && !running && (
-            <div style={{ color: 'var(--good)' }}>
-              ✓ {result.reposScanned} repos · {result.reposWithAlertsEnabled} with Dependabot ·{' '}
-              {result.openAlerts} open alerts · {(result.durationMs / 1000).toFixed(1)}s
-              {result.warnings ? ` · ${result.warnings} warnings` : ''}
-            </div>
-          )}
+          <span>{clock(elapsed)} elapsed</span>
+          {eta && <span>~{eta} left</span>}
         </div>
+      )}
+      {state === 'running' && detail && <div className="fp-current muted mono">{detail}</div>}
+
+      {state === 'done' && result && (
+        <div className="fp-stats">
+          <span>
+            <strong>{result.reposScanned}</strong> repos
+          </span>
+          <span>
+            <strong>{result.reposWithAlertsEnabled}</strong> with Dependabot
+          </span>
+          <span>
+            <strong>{result.openAlerts}</strong> open alerts
+          </span>
+          <span>{(result.durationMs / 1000).toFixed(1)}s</span>
+          {result.warnings > 0 && <span className="fp-warn">{result.warnings} warnings</span>}
+        </div>
+      )}
+
+      {error && <div className="fp-error">{error}</div>}
+      {hint && <div className="fp-hint">{hint}</div>}
+
+      {!running && logs.length > 0 && (
+        <details className="fp-details">
+          <summary>Details</summary>
+          <div className="fp-log mono">
+            {logs.map((line, i) => (
+              <div key={i}>{line}</div>
+            ))}
+          </div>
+        </details>
       )}
     </div>
   );

@@ -3,9 +3,9 @@
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 
-const TABS = [
+const TABS: { href: string; label: string; short?: string }[] = [
   { href: '/', label: 'Overview' },
-  { href: '/repos', label: 'Repositories' },
+  { href: '/repos', label: 'Repositories', short: 'Repos' },
   { href: '/alerts', label: 'Alerts' },
   { href: '/trends', label: 'Trends' },
 ];
@@ -25,7 +25,14 @@ export default function NavTabs() {
           href={`${t.href}${suffix}`}
           className={pathname === t.href ? 'active' : ''}
         >
-          {t.label}
+          {t.short ? (
+            <>
+              <span className="tab-long">{t.label}</span>
+              <span className="tab-short">{t.short}</span>
+            </>
+          ) : (
+            t.label
+          )}
         </Link>
       ))}
     </nav>

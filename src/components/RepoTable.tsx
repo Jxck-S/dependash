@@ -19,6 +19,19 @@ type Filter = 'all' | 'enabled' | 'disabled' | 'unknown' | 'with-alerts' | 'arch
 
 const PAGE_SIZE = 25;
 
+/** Sort choices for the phone layout, where there are no clickable headers. */
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: 'riskScore', label: 'Risk' },
+  { key: 'openAlerts', label: 'Open alerts' },
+  { key: 'critical', label: 'Critical' },
+  { key: 'high', label: 'High' },
+  { key: 'delta', label: 'Δ 7d' },
+  { key: 'healthScore', label: 'Health' },
+  { key: 'mttrDays', label: 'MTTR' },
+  { key: 'oldestOpenAlertDays', label: 'Oldest alert' },
+  { key: 'fullName', label: 'Name' },
+];
+
 export default function RepoTable({ repos }: { repos: RepoMetric[] }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
@@ -111,10 +124,28 @@ export default function RepoTable({ repos }: { repos: RepoMetric[] }) {
           <option value="active">Active (not archived)</option>
           <option value="archived">Archived only</option>
         </select>
+        <select
+          className="mobile-only"
+          value={sortKey}
+          onChange={(e) => {
+            const key = e.target.value as SortKey;
+            setSortKey(key);
+            setAsc(key === 'fullName');
+            setPage(0);
+          }}
+          aria-label="Sort by"
+        >
+          {SORT_OPTIONS.map((o) => (
+            <option key={o.key} value={o.key}>
+              Sort: {o.label}
+            </option>
+          ))}
+        </select>
         <span className="muted">{rows.length} repos</span>
       </div>
 
-      <div style={{ overflowX: 'auto' }}>
+      {/* Table on wide screens, cards on phones (toggled in CSS). */}
+      <div className="table-wrap">
         <table>
           <thead>
             <tr>
@@ -187,6 +218,12 @@ export default function RepoTable({ repos }: { repos: RepoMetric[] }) {
           </tbody>
         </table>
       </div>
+      <div className="card-list">
+        {visible.map((r) => (
+          <RepoCard key={r.fullName} repo={r} />
+        ))}
+        {visible.length === 0 && <div className="empty">No repositories match this filter.</div>}
+      </div>
 
       <div className="pager">
         <button className="pg" onClick={() => setPage(current - 1)} disabled={current === 0}>
@@ -199,6 +236,62 @@ export default function RepoTable({ repos }: { repos: RepoMetric[] }) {
           Next →
         </button>
       </div>
+    </div>
+  );
+}
+
+function RepoCard({ repo: r }: { repo: RepoMetric }) {
+  const sev = r.openBySeverity;
+  const worst = (['critical', 'high', 'medium', 'low'] as const).find((s) => sev[s] > 0);
+  return (
+    <div className={`m-card${worst ? ` sev-${worst}` : ''}`}>
+      <div className="m-card-top">
+        <a href={r.htmlUrl} target="_blank" rel="noreferrer" className="m-card-title">
+          {r.fullName}
+        </a>
+        <a href={r.dependabotUrl} target="_blank" rel="noreferrer" title="Open Dependabot alerts on GitHub">
+          <EnabledBadge enabled={r.dependabotAlertsEnabled} archived={r.archived} />
+        </a>
+      </div>
+      <RepoFlags archived={r.archived} isPrivate={r.private} fork={r.fork} />
+      {r.error && <div className="muted mono m-card-sub">⚠ {r.error.slice(0, 80)}</div>}
+      <div className="m-sev">
+        <span>
+          <strong>{r.openAlerts}</strong> open
+        </span>
+        <span style={{ color: sev.critical ? 'var(--critical)' : undefined }}>{sev.critical} crit</span>
+        <span style={{ color: sev.high ? 'var(--high)' : undefined }}>{sev.high} high</span>
+        <span>{sev.medium} med</span>
+        <span>{sev.low} low</span>
+      </div>
+      <dl className="m-stats">
+        <div>
+          <dt>Risk</dt>
+          <dd>{r.riskScore}</dd>
+        </div>
+        <div>
+          <dt>Health</dt>
+          <dd style={{ color: r.healthScore >= 80 ? 'var(--good)' : undefined }}>{r.healthScore}</dd>
+        </div>
+        <div>
+          <dt>Δ 7d</dt>
+          <dd>
+            <Delta value={r.delta} />
+          </dd>
+        </div>
+        <div>
+          <dt>MTTR</dt>
+          <dd>{r.mttrDays === null ? '—' : `${r.mttrDays}d`}</dd>
+        </div>
+        <div>
+          <dt>Oldest</dt>
+          <dd>{r.oldestOpenAlertDays === null ? '—' : `${r.oldestOpenAlertDays}d`}</dd>
+        </div>
+        <div>
+          <dt>Lang</dt>
+          <dd className="muted">{r.language ?? '—'}</dd>
+        </div>
+      </dl>
     </div>
   );
 }

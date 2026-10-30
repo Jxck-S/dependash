@@ -58,7 +58,7 @@ function useRange(data: DailyPoint[], defaultDays = 90) {
     [data, days],
   );
   const picker = (
-    <div style={{ display: 'flex', gap: 4 }}>
+    <div className="range-picker">
       {RANGES.map((r) => (
         <button
           key={r.label}
@@ -87,7 +87,7 @@ export function SeverityTrendChart({ data }: { data: DailyPoint[] }) {
   const { sliced, picker } = useRange(data);
   return (
     <div className="panel">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div className="chart-head">
         <div>
           <h2>Open alerts over time</h2>
           <p className="sub">Reconstructed daily from each alert’s open / fix timestamps.</p>
@@ -123,7 +123,7 @@ export function ChurnChart({ data }: { data: DailyPoint[] }) {
   const { sliced, picker } = useRange(data);
   return (
     <div className="panel">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div className="chart-head">
         <div>
           <h2>Alert churn (created vs fixed)</h2>
           <p className="sub">Bars: new / fixed / dismissed per day. Line: net change.</p>
@@ -158,7 +158,7 @@ export function FixVelocityChart({ data }: { data: DailyPoint[] }) {
   }, [sliced]);
   return (
     <div className="panel">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div className="chart-head">
         <div>
           <h2>Fix velocity</h2>
           <p className="sub">Daily fixes and the running total over the window.</p>
