@@ -1454,3 +1454,31 @@ button.pg:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+/* ------------------------------ /agents ------------------------------ */
+.agent-steps {
+  margin: 0 0 14px;
+  padding-left: 20px;
+  line-height: 1.6;
+}
+.agent-steps li {
+  margin-bottom: 8px;
+}
+.agent-code {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0 0 14px;
+}
+.agent-code pre {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

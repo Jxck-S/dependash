@@ -64,6 +64,38 @@ export function unsealSession(sealed: string | undefined): Session | null {
   }
 }
 
+/**
+ * Typed sealed blobs for the MCP OAuth flow (client ids, auth codes, access and
+ * refresh tokens). The type is bound in as GCM associated data, so a blob of
+ * one kind never decrypts as another — and never as a session cookie, which is
+ * sealed without associated data.
+ */
+export type SealedKind = 'client' | 'consent' | 'code' | 'access' | 'refresh';
+
+export function sealTyped<T extends { exp: number }>(kind: SealedKind, payload: T): string {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key(), iv);
+  cipher.setAAD(Buffer.from(`dependash:${kind}`));
+  const body = Buffer.concat([cipher.update(JSON.stringify(payload), 'utf8'), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), body]).toString('base64url');
+}
+
+export function unsealTyped<T extends { exp: number }>(kind: SealedKind, sealed: string | null | undefined): T | null {
+  if (!sealed) return null;
+  try {
+    const raw = Buffer.from(sealed, 'base64url');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key(), raw.subarray(0, 12));
+    decipher.setAAD(Buffer.from(`dependash:${kind}`));
+    decipher.setAuthTag(raw.subarray(12, 28));
+    const json = Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString('utf8');
+    const payload = JSON.parse(json) as T;
+    if (typeof payload.exp !== 'number' || payload.exp * 1000 < Date.now()) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
 export function getSession(req: NextRequest): Session | null {
   return unsealSession(req.cookies.get(SESSION_COOKIE)?.value);
 }
