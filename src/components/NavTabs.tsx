@@ -8,6 +8,7 @@ const TABS: { href: string; label: string; short?: string }[] = [
   { href: '/repos', label: 'Repositories', short: 'Repos' },
   { href: '/alerts', label: 'Alerts' },
   { href: '/trends', label: 'Trends' },
+  { href: '/agents', label: 'AI agents', short: 'Agents' },
 ];
 
 export default function NavTabs() {

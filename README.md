@@ -613,17 +613,63 @@ See [`.env.example`](.env.example).
 
 ---
 
-## 9. Guarantees
+## 9. AI agents (MCP)
+
+dependash has an [MCP](https://modelcontextprotocol.io) endpoint at `/api/mcp`, so a coding agent can be told
+*"use dependash to fix my critical and high alerts"* and work through them. **Dependabot goes first.** For each
+alert the agent checks whether Dependabot's own PR is good enough, and only fixes by hand what Dependabot couldn't.
+
+```bash
+# hosted: your agent opens a browser to approve and sign in with GitHub
+claude mcp add --transport http dependash https://dependash.vercel.app/api/mcp
+
+# local: loopback only, uses your gh token, no sign-in
+claude mcp add --transport http dependash http://localhost:3939/api/mcp
+```
+
+| Tool | What it does |
+| --- | --- |
+| `list_open_alerts` | Open alerts across every repo you can see (or one `repo` / `owner`), most severe first. |
+| `triage_alerts` | For up to 20 repos, matches each alert to Dependabot's PR and checks that the PR reaches the patched version, passes CI and has no conflicts. Also checks whether security updates are on. Gives each alert an action and each repo ordered `nextSteps` with the exact `gh` commands. |
+| `get_dependabot_pr` | A PR's release notes, manifest diffs, CI results with failure summaries, and merge state, for review. |
+| `manual_fix_prompt` | Step-by-step instructions for the alerts Dependabot can't fix (the same prompt as the dashboard's copy button). |
+| `whoami` | The account the connection acts as, and its API quota. |
+
+Actions that `triage_alerts` assigns:
+
+| Action | When | What the agent does |
+| --- | --- | --- |
+| `review_dependabot_pr` | PR is green and reaches the patched version | Reviews it, then merges only if you've allowed it |
+| `fix_on_pr_branch` | PR fails CI, or bumps to a version below the patch | Fixes on the Dependabot branch |
+| `rebase_or_recreate_pr` | PR conflicts, or was closed unmerged | `@dependabot rebase` / `@dependabot recreate` |
+| `enable_security_updates` | No PR because security updates are off or paused | `gh api -X PUT repos/O/R/automated-security-fixes`, then triages again |
+| `wait` | CI is running, or the alert is under a day old | Triages again later |
+| `manual_fix` | Dependabot gave up, a merged PR didn't clear the alert, or you can't change the settings | Fixes it in its own branch and PR |
+| `human_decision` | No patched version exists | Asks you |
+
+**Still read-only.** The MCP tools only issue GETs. Branches, pushes, comments and merges happen with the agent's own git
+/ `gh` credentials, so your agent's permission settings decide what it may do.
+
+**Sign-in (hosted).** `/api/mcp` answers unauthenticated requests with a `401` that points to dependash's OAuth metadata
+(RFC 9728 / 8414). Clients register dynamically (RFC 7591), approve a dependash consent screen, sign in with GitHub, and
+get a PKCE-bound code, then a 24-hour access token plus a 90-day refresh token. As with sessions, there is no database.
+Client IDs, codes and tokens are AES-GCM-sealed blobs, each bound to its kind, that wrap your GitHub grant. Revoking
+dependash under GitHub → Settings → Applications revokes them all. Clients that only take a static header can get a
+30-day token from the **AI agents** tab.
+
+---
+
+## 10. Guarantees
 
 - `src/lib/github.ts` issues `method: 'GET'` exclusively, and the `/api/gh` proxy only exports a `GET` handler for an allowlist of read endpoints. There is no code path that can POST, PATCH, PUT or DELETE against a repository.
 - The only non-GET calls are the hosted-mode OAuth plumbing: exchanging the sign-in code for a token (`POST github.com/login/oauth/access_token`) and revoking it on sign-out (`DELETE /applications/:client_id/token`). Neither touches a repository.
 - The only file writes are the single last-fetch JSON in `$TMPDIR` (or `DEPENDASH_STATE_DIR`) in local mode and the standard `.next/` build output. Hosted mode stores nothing on the server. Nothing is written into your repositories.
-- No GitHub Actions, workflows, commits, PRs, branches, releases, labels, or settings changes.
+- No GitHub Actions, workflows, commits, PRs, branches, releases, labels, or settings changes. That includes the MCP endpoint: its tools are GET-only, and the agent makes any writes itself.
 - No external database, telemetry, or third-party service. Only GitHub is contacted.
 
 ---
 
-## 10. Contributing
+## 11. Contributing
 
 Issues and PRs are welcome. Before opening a PR:
 

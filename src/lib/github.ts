@@ -93,7 +93,8 @@ export class GitHubClient {
     this.maxAlertPages = opts.maxAlertPages ?? 20;
   }
 
-  private async request(
+  /** Raw GET: returns the status instead of throwing, for probe endpoints. */
+  async request(
     path: string,
     init: { accept?: string } = {},
     attempt = 0,
@@ -155,7 +156,8 @@ export class GitHubClient {
     return { status: res.status, headers: res.headers, body };
   }
 
-  private async get<T>(path: string): Promise<T> {
+  /** GET a single resource; throws GitHubError on 4xx/5xx. */
+  async get<T>(path: string): Promise<T> {
     const { status, body } = await this.request(path);
     if (status >= 400) {
       const msg =
@@ -166,7 +168,7 @@ export class GitHubClient {
   }
 
   /** Follow RFC-5988 `link: rel="next"` pagination. */
-  private async paginate<T>(path: string, maxPages = 50): Promise<T[]> {
+  async paginate<T>(path: string, maxPages = 50): Promise<T[]> {
     const out: T[] = [];
     let next: string | null = path;
     let pages = 0;

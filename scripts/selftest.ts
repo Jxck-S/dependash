@@ -21,6 +21,12 @@ import { AlertRecord, RepoRecord, Snapshot, emptySeverityCounts } from '../src/l
 import { buildDemoSnapshot } from '../src/lib/demo';
 import { sealSession, unsealSession } from '../src/lib/session';
 import { agentFixPrompt, alertsMarkdown, groupByRepo, repoNames } from '../src/lib/alert-export';
+import { bumpFor, classify, compareVersions, matchPr, reachesPatch, summarizeCi, triageRepo } from '../src/lib/fixes';
+import type { GitHubClient } from '../src/lib/github';
+import { sealTyped, unsealTyped } from '../src/lib/session';
+import { pkceMatches, registerClient, validRedirectUri } from '../src/lib/mcp/oauth';
+import { handleMessage } from '../src/lib/mcp/server';
+import crypto from 'node:crypto';
 
 function iso(date: string): string {
   return `${date}T12:00:00Z`;
@@ -412,4 +418,170 @@ check('the agent prompt carries instructions and every alert', () => {
   for (const a of exportAlerts) assert.ok(prompt.includes(a.htmlUrl), a.key);
 });
 
-console.log(`\n${passed} checks passed\n`);
+// ── Fix triage ──────────────────────────────────────────────────────────────
+check('versions compare numerically, pre-releases sort first', () => {
+  assert.equal(compareVersions('4.17.21', '4.17.3'), 1);
+  assert.equal(compareVersions('v2.0', '2.0.0'), 0);
+  assert.equal(compareVersions('1.2.0-rc1', '1.2.0'), -1);
+  assert.equal(compareVersions('latest', '1.0'), null);
+  assert.equal(reachesPatch('4.17.21', '4.17.21'), true);
+  assert.equal(reachesPatch('4.17.20', '4.17.21'), false);
+  assert.equal(reachesPatch(null, '1.0'), null);
+});
+check('bumps are parsed from single and grouped Dependabot PRs', () => {
+  assert.deepEqual(bumpFor('lodash', 'Bump lodash from 4.17.20 to 4.17.21', ''), { from: '4.17.20', to: '4.17.21' });
+  assert.deepEqual(
+    bumpFor('lodash', 'Bump lodash from 4.17.20 to 4.17.21 in /web', 'Bumps [lodash](https://github.com/lodash/lodash) from 4.17.20 to 4.17.21.'),
+    { from: '4.17.20', to: '4.17.21' },
+  );
+  const grouped = 'Bumps the npm_and_yarn group with 2 updates:\n\nUpdates `next` from 14.2.3 to 15.5.24\nUpdates `postcss` from 8.4.31 to 8.5.6';
+  assert.deepEqual(bumpFor('postcss', 'Bump the npm_and_yarn group across 1 directory with 2 updates', grouped), { from: '8.4.31', to: '8.5.6' });
+  assert.deepEqual(bumpFor('@babel/traverse', 'Bump @babel/traverse from 7.22.5 to 7.23.2', ''), { from: '7.22.5', to: '7.23.2' });
+  assert.equal(bumpFor('next', 'Bump nextra from 1 to 2', ''), null, 'prefix of another package name');
+});
+check('PRs only match alerts in the same directory and ecosystem', () => {
+  const a = alert('acme/web', 9, { packageName: 'lodash', ecosystem: 'npm', manifestPath: 'web/package-lock.json' });
+  const pr = (title: string, ref: string) => ({ title, body: '', head: { ref } });
+  assert.ok(matchPr(a, pr('Bump lodash from 1.0.0 to 2.0.0 in /web', 'dependabot/npm_and_yarn/web/lodash-2.0.0')));
+  assert.equal(matchPr(a, pr('Bump lodash from 1.0.0 to 2.0.0 in /api', 'dependabot/npm_and_yarn/api/lodash-2.0.0')), null);
+  assert.equal(matchPr(a, pr('Bump lodash from 1.0.0 to 2.0.0', 'dependabot/pip/lodash-2.0.0')), null);
+  assert.equal(matchPr(a, pr('Bump lodash from 1.0.0 to 2.0.0', 'feature/lodash')), null);
+});
+check('CI summary: failures win, then pending, then passing', () => {
+  const ok = { status: 'completed', conclusion: 'success', name: 'build' };
+  assert.equal(summarizeCi([ok], []).ci, 'passing');
+  assert.equal(summarizeCi([ok, { status: 'in_progress', conclusion: null, name: 't' }], []).ci, 'pending');
+  assert.equal(summarizeCi([ok], [{ state: 'failure', context: 'ci/legacy' }]).ci, 'failing');
+  assert.equal(summarizeCi([], []).ci, 'none');
+});
+check('alerts are bucketed by what Dependabot has (or hasn’t) done', () => {
+  const on = { enabled: true, paused: false, canEnable: true };
+  const old = alert('acme/web', 1, { createdAt: '2026-01-01T00:00:00Z', firstPatchedVersion: '2.0.0' });
+  const pr = (o: object) => ({ number: 5, title: '', url: '', state: 'open' as const, branch: '', headSha: '', createdAt: '', updatedAt: '', bumps: [], alerts: [1], ci: 'passing' as const, mergeableState: 'clean', reaches: true, ...o });
+  assert.equal(classify(old, pr({}), on).action, 'review_dependabot_pr');
+  assert.equal(classify(old, pr({ ci: 'failing' }), on).bucket, 'dependabot_pr_ci_failing');
+  assert.equal(classify(old, pr({ reaches: false }), on).bucket, 'dependabot_pr_insufficient');
+  assert.equal(classify(old, pr({ mergeableState: 'dirty' }), on).action, 'rebase_or_recreate_pr');
+  assert.equal(classify(old, pr({ state: 'merged' }), on).bucket, 'merged_but_still_open');
+  assert.equal(classify(old, pr({ state: 'closed' }), on).bucket, 'dependabot_pr_closed');
+  assert.equal(classify(old, null, { ...on, enabled: false }).action, 'enable_security_updates');
+  assert.equal(classify(old, null, { enabled: false, paused: false, canEnable: false }).action, 'manual_fix');
+  assert.equal(classify(old, null, on).bucket, 'dependabot_did_not_open_pr');
+  assert.equal(classify({ ...old, createdAt: new Date().toISOString() }, null, on).action, 'wait');
+  assert.equal(classify({ ...old, firstPatchedVersion: null }, null, on).action, 'human_decision');
+});
+
+// ── MCP OAuth ───────────────────────────────────────────────────────────────
+process.env.SESSION_SECRET = 'selftest-secret-selftest-secret-selftest';
+check('sealed MCP blobs are bound to their kind', () => {
+  const t = sealTyped('access', { gh: 'gho_x', login: 'me', cid: 'c', exp: future });
+  assert.equal(unsealTyped<{ gh: string; exp: number }>('access', t)?.gh, 'gho_x');
+  assert.equal(unsealTyped('refresh', t), null);
+  assert.equal(unsealTyped('code', t), null);
+  assert.equal(unsealSession(t), null, 'an access token is not a session cookie');
+  assert.equal(unsealTyped('access', sealSession({ token: 'gho_x', login: 'me', exp: future })), null);
+  assert.equal(unsealTyped('access', sealTyped('access', { exp: 1 })), null, 'expired');
+});
+check('PKCE S256 verification', () => {
+  const verifier = crypto.randomBytes(32).toString('base64url');
+  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+  assert.ok(pkceMatches(verifier, challenge));
+  assert.ok(!pkceMatches(`${verifier}x`, challenge));
+  assert.ok(!pkceMatches('short', challenge));
+});
+check('redirect URIs: https, loopback http, app schemes only', () => {
+  assert.ok(validRedirectUri('https://claude.ai/api/mcp/auth_callback'));
+  assert.ok(validRedirectUri('http://localhost:53682/callback'));
+  assert.ok(validRedirectUri('http://127.0.0.1:9000/cb'));
+  assert.ok(validRedirectUri('cursor://anysphere.cursor-mcp/oauth/callback'));
+  assert.ok(!validRedirectUri('http://evil.example/cb'));
+  assert.ok(!validRedirectUri('javascript:alert(1)'));
+  assert.ok(!validRedirectUri('https://x.example/cb#frag'));
+  const reg = registerClient({ redirect_uris: ['http://localhost:1/cb'], client_name: 'Claude Code' });
+  assert.ok(reg.ok);
+  assert.ok(!registerClient({ redirect_uris: ['http://localhost:1/cb'], token_endpoint_auth_method: 'client_secret_post' }).ok);
+});
+
+// ── async: MCP protocol + end-to-end triage against a fake GitHub ──────────
+async function checkAsync(name: string, fn: () => Promise<void>) {
+  await fn();
+  passed += 1;
+  console.log(`  ✓ ${name}`);
+}
+
+function fakeGitHub(routes: Record<string, unknown>): GitHubClient {
+  const find = (path: string) => {
+    const key = Object.keys(routes).find((k) => path.startsWith(k));
+    if (!key) throw Object.assign(new Error(`unexpected GET ${path}`), { status: 404 });
+    return routes[key];
+  };
+  return {
+    errors: [],
+    get: async (p: string) => find(p),
+    paginate: async (p: string) => find(p),
+    request: async (p: string) => ({ status: 200, headers: new Headers(), body: find(p) }),
+    viewer: async () => 'tester',
+    rateLimit: async () => ({ remaining: 4999, limit: 5000 }),
+  } as unknown as GitHubClient;
+}
+
+(async () => {
+  await checkAsync('MCP initialize, tools/list and notifications', async () => {
+    const ctx = async () => ({ gh: fakeGitHub({}), login: 'tester' });
+    const init = (await handleMessage({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } }, ctx, '2025-11-25')) as { result: { protocolVersion: string; instructions: string } };
+    assert.equal(init.result.protocolVersion, '2025-06-18');
+    assert.match(init.result.instructions, /triage_alerts/);
+    const list = (await handleMessage({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, ctx, '2025-11-25')) as { result: { tools: { name: string; annotations: { readOnlyHint: boolean } }[] } };
+    assert.deepEqual(list.result.tools.map((t) => t.name), ['whoami', 'list_open_alerts', 'triage_alerts', 'get_dependabot_pr', 'manual_fix_prompt']);
+    assert.ok(list.result.tools.every((t) => t.annotations.readOnlyHint));
+    assert.equal(await handleMessage({ jsonrpc: '2.0', method: 'notifications/initialized' }, ctx, '2025-11-25'), null);
+    const bad = (await handleMessage({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'triage_alerts', arguments: { repos: ['nope'] } } }, ctx, '2025-11-25')) as { result: { isError: boolean } };
+    assert.equal(bad.result.isError, true);
+  });
+
+  await checkAsync('triage end to end: ready PR, failing PR, and a manual fix', async () => {
+    const rawAlert = (number: number, pkg: string, patched: string | null, manifest = 'package-lock.json') => ({
+      number,
+      state: 'open',
+      html_url: `https://github.com/acme/web/security/dependabot/${number}`,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      fixed_at: null,
+      dismissed_at: null,
+      dismissed_reason: null,
+      dependency: { package: { ecosystem: 'npm', name: pkg }, manifest_path: manifest, scope: 'runtime' },
+      security_advisory: { ghsa_id: `GHSA-${number}`, cve_id: null, summary: `${pkg} bug`, severity: 'high' },
+      security_vulnerability: { severity: 'high', vulnerable_version_range: '< 9', first_patched_version: patched ? { identifier: patched } : null, package: { ecosystem: 'npm', name: pkg } },
+    });
+    const pull = (number: number, title: string, sha: string) => ({
+      number, title, body: '', html_url: `https://github.com/acme/web/pull/${number}`, state: 'open', merged_at: null,
+      created_at: '2026-01-02T00:00:00Z', updated_at: '2026-01-02T00:00:00Z', user: { login: 'dependabot[bot]' },
+      head: { ref: `dependabot/npm_and_yarn/x-${number}`, sha },
+    });
+    const gh = fakeGitHub({
+      '/repos/acme/web/dependabot/alerts': [rawAlert(1, 'lodash', '4.17.21'), rawAlert(2, 'axios', '1.7.4'), rawAlert(3, 'minimist', '1.2.6')],
+      '/repos/acme/web/automated-security-fixes': { enabled: true, paused: false },
+      '/repos/acme/web/pulls/10': { mergeable_state: 'clean' },
+      '/repos/acme/web/pulls/11': { mergeable_state: 'clean' },
+      '/repos/acme/web/pulls': [pull(10, 'Bump lodash from 4.17.20 to 4.17.21', 'aaa'), pull(11, 'Bump axios from 1.6.0 to 1.7.4', 'bbb')],
+      '/repos/acme/web/commits/aaa/check-runs': { check_runs: [{ status: 'completed', conclusion: 'success', name: 'ci' }] },
+      '/repos/acme/web/commits/bbb/check-runs': { check_runs: [{ status: 'completed', conclusion: 'failure', name: 'test' }] },
+      '/repos/acme/web/commits/': { statuses: [] },
+      '/repos/acme/web': { default_branch: 'main', permissions: { admin: true } },
+    });
+    const t = await triageRepo(gh, 'acme/web');
+    const by = Object.fromEntries(t.alerts.map((a) => [a.packageName, a]));
+    assert.equal(by.lodash.action, 'review_dependabot_pr');
+    assert.equal(by.lodash.pr, 10);
+    assert.equal(by.axios.bucket, 'dependabot_pr_ci_failing');
+    assert.equal(by.minimist.bucket, 'dependabot_did_not_open_pr');
+    assert.equal(t.securityUpdates.enabled, true);
+    assert.ok(t.nextSteps.some((s) => s.includes('#10')));
+    assert.ok(t.nextSteps.some((s) => s.includes('manual_fix_prompt')));
+  });
+
+  console.log(`\n${passed} checks passed\n`);
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
